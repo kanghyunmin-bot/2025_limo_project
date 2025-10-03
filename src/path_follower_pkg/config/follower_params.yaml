@@ -1,0 +1,14 @@
+/**:
+  ros__parameters:
+    ds: 0.03
+    v_max: 0.8
+    a_long: 0.8
+    a_lat_max: 1.5
+    k_y: 2.0
+    k_psi: 1.8
+    k_ld: 1.0
+    L_min: 0.25
+    L_max: 0.9
+    rate: 50.0
+    goal_tol_xy: 0.05
+    goal_tol_yaw_deg: 5.0
