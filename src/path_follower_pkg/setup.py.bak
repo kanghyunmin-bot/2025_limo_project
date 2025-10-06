@@ -26,7 +26,6 @@ setup(
     entry_points={
         'console_scripts': [
             'follower_node = path_follower_pkg.follower_node:main',
-            'control_panel = path_follower_pkg.control_panel:main'
         ],
     },
 )

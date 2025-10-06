@@ -17,16 +17,25 @@ def generate_launch_description():
         description='Path to parameter file'
     )
     
+    # Control panel GUI - xterm 없이 실행
+    control_panel_node = Node(
+        package='path_follower_pkg',
+        executable='control_panel',
+        name='path_follower_gui',
+        output='screen',
+    )
+
+    # Path follower node
     follower_node = Node(
         package='path_follower_pkg',
         executable='follower_node',
         name='interactive_path_follower',
         output='screen',
         parameters=[LaunchConfiguration('params_file')],
-        emulate_tty=True,
     )
 
     return LaunchDescription([
         params_file_arg,
+        control_panel_node,
         follower_node,
     ])
