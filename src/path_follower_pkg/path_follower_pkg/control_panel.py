@@ -2,20 +2,17 @@
 import os
 import socket
 import time
+import subprocess
+import signal
 from collections import deque
 import threading
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist, PointStamped
 from std_msgs.msg import Empty, Bool
-
-try:
-    from rclpy.utilities import get_rmw_implementation_identifier
-except Exception:
-    get_rmw_implementation_identifier = None
 
 
 class ControlPanel(Node):
@@ -23,242 +20,292 @@ class ControlPanel(Node):
         super().__init__("path_follower_gui")
 
         # Publishers
-        self.pub_start   = self.create_publisher(Empty, "/path_follower/start", 10)
-        self.pub_stop    = self.create_publisher(Empty, "/path_follower/stop", 10)
-        self.pub_reset   = self.create_publisher(Empty, "/path_follower/reset", 10)
-        self.pub_edit    = self.create_publisher(Bool,  "/path_follower/edit_mode", 10)
-        self.pub_scale   = self.create_publisher(Twist, "/path_follower/cmd_vel_scale", 10)
-        self.pub_ovr     = self.create_publisher(Twist, "/path_follower/cmd_vel_override", 10)
-        self.pub_ovr_en  = self.create_publisher(Bool,  "/path_follower/override_enable", 10)
+        self.pub_start = self.create_publisher(Empty, "/path_follower/start", 10)
+        self.pub_stop = self.create_publisher(Empty, "/path_follower/stop", 10)
+        self.pub_reset = self.create_publisher(Empty, "/path_follower/reset", 10)
+        self.pub_edit = self.create_publisher(Bool, "/path_follower/edit_mode", 10)
+        self.pub_scale = self.create_publisher(Twist, "/path_follower/cmd_vel_scale", 10)
+        self.pub_ovr = self.create_publisher(Twist, "/path_follower/cmd_vel_override", 10)
+        self.pub_ovr_en = self.create_publisher(Bool, "/path_follower/override_enable", 10)
 
         # Subscribers
-        self.sub_cmd     = self.create_subscription(Twist, "/cmd_vel", self.on_cmd_vel, 10)
+        self.sub_cmd = self.create_subscription(Twist, "/cmd_vel", self.on_cmd_vel, 10)
         self.sub_clicked = self.create_subscription(PointStamped, "/clicked_point", self.on_clicked_point, 10)
 
-        # Telemetry buffers
+        # State
         self.last_cmd = Twist()
         self.last_cmd_time = 0.0
         self.points = deque(maxlen=50)
         self.point_counter = 0
-
-        # Control states
-        self.scale_lin = 1.0
-        self.scale_ang = 1.0
         self.override_enable = False
-        self.override_twist = Twist()
-        self.sub_scale      = self.create_subscription(Twist, '/path_follower/cmd_vel_scale', self.on_scale, 10)
-        self.sub_override   = self.create_subscription(Twist, '/path_follower/cmd_vel_override', self.on_override, 10)
-        self.sub_override_en= self.create_subscription(Bool,  '/path_follower/override_enable', self.on_override_enable, 10)
+        self.wasd_keys = set()
+        self.wasd_linear = 0.5
+        self.wasd_angular = 1.0
 
-        # ROS/Network status
-        self.status = {
-            "domain_id": os.getenv("ROS_DOMAIN_ID", "0"),
-            "localhost_only": os.getenv("ROS_LOCALHOST_ONLY", "0"),
-            "rmw": self._detect_rmw(),
-            "host": socket.gethostname(),
-            "ip": self._detect_ip(),
-            "node_count": 0,
-            "other_nodes": [],
-            "topic_count": 0,
-            "has_cmd_vel": False,
-        }
-        self.create_timer(1.0, self._refresh_ros_status)
+        # LIMO
+        self.limo_ip = "192.168.1.100"
+        self.limo_user = "limo"
+        self.ssh_ok = False
 
-        # Start Tk GUI
-        self.gui_thread = threading.Thread(target=self._run_gui, daemon=True)
+        # Network
+        self.domain = os.getenv("ROS_DOMAIN_ID", "0")
+        self.rmw = os.getenv("RMW_IMPLEMENTATION", "unknown")
+        self.localhost = os.getenv("ROS_LOCALHOST_ONLY", "0")
+        self.host = socket.gethostname()
+        self.ip = self._get_ip()
+
+        # Timers
+        self.create_timer(0.05, self._wasd_update)
+
+        # GUI
+        self.gui_thread = threading.Thread(target=self._gui_main, daemon=True)
         self.gui_thread.start()
 
-        self.get_logger().info("Enhanced GUI started with monitoring & control features")
+        self.get_logger().info("GUI started")
 
-    def _detect_rmw(self):
-        try:
-            if get_rmw_implementation_identifier:
-                return get_rmw_implementation_identifier()
-        except Exception:
-            pass
-        return os.getenv("RMW_IMPLEMENTATION", "unknown")
-
-    def _detect_ip(self):
-        ip = "unknown"
+    def _get_ip(self):
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))
             ip = s.getsockname()[0]
             s.close()
-        except Exception:
-            try:
-                ip = socket.gethostbyname(socket.gethostname())
-            except Exception:
-                pass
-        return ip
+            return ip
+        except:
+            return "unknown"
 
-    def _refresh_ros_status(self):
-        try:
-            names = self.get_node_names_and_namespaces()
-            topics = self.get_topic_names_and_types()
-        except Exception:
+    def _wasd_update(self):
+        if not self.override_enable:
             return
+        
+        v = 0.0
+        w = 0.0
+        if 'w' in self.wasd_keys: v += self.wasd_linear
+        if 's' in self.wasd_keys: v -= self.wasd_linear
+        if 'a' in self.wasd_keys: w += self.wasd_angular
+        if 'd' in self.wasd_keys: w -= self.wasd_angular
+        
+        msg = Twist()
+        msg.linear.x = float(v)
+        msg.angular.z = float(w)
+        self.pub_ovr.publish(msg)
 
-        self.status["node_count"] = len(names)
-        self_name = self.get_name()
-        others = [(n, ns) for (n, ns) in names if n != self_name]
-        self.status["other_nodes"] = others[:6]
-        self.status["topic_count"] = len(topics)
-        self.status["has_cmd_vel"] = any(name == "/cmd_vel" for (name, _typ) in topics)
-
-    def on_cmd_vel(self, msg: Twist):
+    def on_cmd_vel(self, msg):
         self.last_cmd = msg
         self.last_cmd_time = time.time()
 
-    def on_clicked_point(self, msg: PointStamped):
+    def on_clicked_point(self, msg):
         self.point_counter += 1
-        self.points.append((self.point_counter, f"{msg.point.x:.3f}", f"{msg.point.y:.3f}", time.strftime("%H:%M:%S")))
+        self.points.append((
+            self.point_counter,
+            f"{msg.point.x:.3f}",
+            f"{msg.point.y:.3f}",
+            time.strftime("%H:%M:%S")
+        ))
 
-    def on_scale(self, msg: Twist):
-        self.scale_lin = max(0.0, float(msg.linear.x))
-        self.scale_ang = max(0.0, float(msg.angular.z))
-
-    def on_override(self, msg: Twist):
-        self.override_twist = msg
-
-    def on_override_enable(self, msg: Bool):
-        self.override_enable = bool(msg.data)
-
-    def _run_gui(self):
+    def _gui_main(self):
         root = tk.Tk()
         root.title("Path Follower Control")
-        
-        # Top bar
+        root.geometry("750x650")
+
+        # === TOP BUTTONS ===
         top = ttk.Frame(root, padding=10)
         top.pack(fill="x")
-        ttk.Button(top, text="Start", command=self.on_click_start).pack(side="left", padx=4)
-        ttk.Button(top, text="Stop",  command=self.on_click_stop ).pack(side="left", padx=4)
-        ttk.Button(top, text="Reset Path", command=self.on_click_reset).pack(side="left", padx=4)
-        self.var_edit = tk.BooleanVar(value=False)
-        ttk.Checkbutton(top, text="Edit Mode", variable=self.var_edit,
-                        command=self.on_toggle_edit).pack(side="left", padx=12)
+        ttk.Button(top, text="Start", command=lambda: self.pub_start.publish(Empty())).pack(side="left", padx=4)
+        ttk.Button(top, text="Stop", command=lambda: self.pub_stop.publish(Empty())).pack(side="left", padx=4)
+        ttk.Button(top, text="Reset", command=lambda: self.pub_reset.publish(Empty())).pack(side="left", padx=4)
+        
+        edit_var = tk.BooleanVar()
+        ttk.Checkbutton(top, text="Edit", variable=edit_var,
+                        command=lambda: self.pub_edit.publish(Bool(data=edit_var.get()))).pack(side="left", padx=10)
 
-        # Status panel
-        status = ttk.LabelFrame(root, text="ROS / Network Status", padding=10)
-        status.pack(fill="x", padx=10, pady=(0,10))
-        self.lbl_dom  = ttk.Label(status, text="DOMAIN: -")
-        self.lbl_rmw  = ttk.Label(status, text="RMW: -")
-        self.lbl_loc  = ttk.Label(status, text="LOCALHOST_ONLY: -")
-        self.lbl_host = ttk.Label(status, text="Host/IP: -")
-        self.lbl_nodes= ttk.Label(status, text="Nodes: -")
-        self.lbl_topics=ttk.Label(status, text="Topics: -")
-        for i,w in enumerate([self.lbl_dom, self.lbl_rmw, self.lbl_loc, self.lbl_host, self.lbl_nodes, self.lbl_topics]):
-            w.grid(row=i//3, column=i%3, sticky="w", padx=6, pady=2)
+        # === LIMO ===
+        limo_frm = ttk.LabelFrame(root, text="🤖 LIMO Remote", padding=10)
+        limo_frm.pack(fill="x", padx=10, pady=5)
+        
+        ttk.Label(limo_frm, text="IP:").grid(row=0, column=0, sticky="e", padx=5)
+        ip_var = tk.StringVar(value=self.limo_ip)
+        ttk.Entry(limo_frm, textvariable=ip_var, width=15).grid(row=0, column=1, sticky="w")
+        ttk.Button(limo_frm, text="Test", command=lambda: self._test_ssh(ip_var.get(), lbl_ssh)).grid(row=0, column=2, padx=5)
+        
+        lbl_ssh = ttk.Label(limo_frm, text="⚪ 미확인", foreground="gray")
+        lbl_ssh.grid(row=1, column=0, columnspan=3, sticky="w", pady=5)
 
-        # Middle: points + cmd_vel
-        mid = ttk.Frame(root, padding=(10, 0, 10, 10))
+        # === NETWORK ===
+        net_frm = ttk.LabelFrame(root, text="Network Config", padding=10)
+        net_frm.pack(fill="x", padx=10, pady=5)
+        
+        ttk.Label(net_frm, text="DOMAIN:").grid(row=0, column=0, sticky="e")
+        domain_var = tk.StringVar(value=self.domain)
+        ttk.Entry(net_frm, textvariable=domain_var, width=5).grid(row=0, column=1, sticky="w", padx=5)
+        
+        ttk.Label(net_frm, text="RMW:").grid(row=1, column=0, sticky="e")
+        rmw_var = tk.StringVar(value=self.rmw)
+        ttk.Combobox(net_frm, textvariable=rmw_var, width=18,
+                     values=["rmw_fastrtps_cpp", "rmw_cyclonedds_cpp"]).grid(row=1, column=1, sticky="w", padx=5)
+        
+        ttk.Label(net_frm, text="LOCALHOST:").grid(row=2, column=0, sticky="e")
+        local_var = tk.StringVar(value=self.localhost)
+        ttk.Combobox(net_frm, textvariable=local_var, width=5, values=["0", "1"]).grid(row=2, column=1, sticky="w", padx=5)
+        
+        ttk.Button(net_frm, text="Apply & Restart",
+                   command=lambda: self._apply_restart(domain_var.get(), rmw_var.get(), local_var.get(), ip_var.get())).grid(row=0, column=2, rowspan=3, padx=10)
+        
+        ttk.Label(net_frm, text=f"Host: {self.host} / {self.ip}").grid(row=3, column=0, columnspan=3, sticky="w", pady=5)
+
+        # === POINTS ===
+        mid = ttk.Frame(root, padding=10)
         mid.pack(fill="both", expand=True)
         
-        left = ttk.Frame(mid)
-        left.pack(side="left", fill="both", expand=True, padx=(0,10))
-        ttk.Label(left, text="Clicked Points (latest 50)").pack(anchor="w")
-        self.tree = ttk.Treeview(left, columns=("#","x","y","time"), show="headings", height=10)
-        for c in ("#","x","y","time"):
-            self.tree.heading(c, text=c)
-            self.tree.column(c, width=80, anchor="center")
-        self.tree.pack(fill="both", expand=True)
+        ttk.Label(mid, text="Clicked Points").pack(anchor="w")
+        tree = ttk.Treeview(mid, columns=("#", "x", "y", "time"), show="headings", height=5)
+        for c in ("#", "x", "y", "time"):
+            tree.heading(c, text=c)
+            tree.column(c, width=60, anchor="center")
+        tree.pack(fill="both", expand=True)
+        
+        lbl_v = ttk.Label(mid, text="linear.x: 0.000")
+        lbl_w = ttk.Label(mid, text="angular.z: 0.000")
+        lbl_v.pack(anchor="w", pady=(10, 0))
+        lbl_w.pack(anchor="w")
 
-        right = ttk.Frame(mid)
-        right.pack(side="left", fill="y")
-        ttk.Label(right, text="Current /cmd_vel").pack(anchor="w")
-        self.lbl_v = ttk.Label(right, text="linear.x: 0.000 m/s")
-        self.lbl_w = ttk.Label(right, text="angular.z: 0.000 rad/s")
-        self.lbl_age = ttk.Label(right, text="age: - s")
-        self.lbl_v.pack(anchor="w", pady=(6,0))
-        self.lbl_w.pack(anchor="w")
-        self.lbl_age.pack(anchor="w")
-        ttk.Separator(right, orient="horizontal").pack(fill="x", pady=10)
+        # === CONTROL ===
+        ctrl = ttk.Frame(root, padding=10)
+        ctrl.pack(fill="x")
+        
+        ttk.Label(ctrl, text="Scale").grid(row=0, column=0, sticky="w", columnspan=2)
+        
+        s_lin = tk.DoubleVar(value=1.0)
+        s_ang = tk.DoubleVar(value=1.0)
+        
+        ttk.Label(ctrl, text="linear ×").grid(row=1, column=0, sticky="e")
+        ttk.Scale(ctrl, from_=0, to=1.5, variable=s_lin).grid(row=1, column=1, sticky="ew", padx=5)
+        
+        ttk.Label(ctrl, text="angular ×").grid(row=2, column=0, sticky="e")
+        ttk.Scale(ctrl, from_=0, to=1.5, variable=s_ang).grid(row=2, column=1, sticky="ew", padx=5)
+        
+        ttk.Button(ctrl, text="Apply", command=lambda: self._apply_scale(s_lin.get(), s_ang.get())).grid(row=1, column=2, rowspan=2)
+        
+        ttk.Separator(ctrl, orient="horizontal").grid(row=3, column=0, columnspan=3, sticky="ew", pady=10)
+        
+        ovr_var = tk.BooleanVar()
+        ttk.Checkbutton(ctrl, text="Override (WASD)", variable=ovr_var,
+                        command=lambda: self._toggle_ovr(ovr_var.get())).grid(row=4, column=0, columnspan=3, sticky="w")
+        
+        lbl_wasd = ttk.Label(ctrl, text="W/A/S/D")
+        lbl_wasd.grid(row=5, column=0, columnspan=3, sticky="w", pady=5)
+        
+        lin_scale = tk.DoubleVar(value=0.5)
+        ang_scale = tk.DoubleVar(value=1.0)
+        
+        ttk.Label(ctrl, text="Speed:").grid(row=6, column=0, sticky="e")
+        ttk.Scale(ctrl, from_=0.1, to=1.0, variable=lin_scale,
+                  command=lambda _: setattr(self, 'wasd_linear', lin_scale.get())).grid(row=6, column=1, sticky="ew", padx=5)
+        
+        ttk.Label(ctrl, text="Turn:").grid(row=7, column=0, sticky="e")
+        ttk.Scale(ctrl, from_=0.1, to=2.0, variable=ang_scale,
+                  command=lambda _: setattr(self, 'wasd_angular', ang_scale.get())).grid(row=7, column=1, sticky="ew", padx=5)
+        
+        ctrl.grid_columnconfigure(1, weight=1)
 
-        # Bottom: scale & override
-        bottom = ttk.Frame(root, padding=(10, 0, 10, 10))
-        bottom.pack(fill="x")
-        ttk.Label(bottom, text="Scale (multiplier)").grid(row=0, column=0, sticky="w", columnspan=3)
-        self.s_lin = tk.DoubleVar(value=1.0)
-        self.s_ang = tk.DoubleVar(value=1.0)
-        ttk.Label(bottom, text="linear.x ×").grid(row=1, column=0, sticky="e")
-        ttk.Scale(bottom, from_=0.0, to=1.5, orient="horizontal", variable=self.s_lin).grid(row=1, column=1, sticky="ew", padx=6)
-        ttk.Label(bottom, text="angular.z ×").grid(row=2, column=0, sticky="e")
-        ttk.Scale(bottom, from_=0.0, to=1.5, orient="horizontal", variable=self.s_ang).grid(row=2, column=1, sticky="ew", padx=6)
-        ttk.Button(bottom, text="Apply Scale", command=self.on_apply_scale).grid(row=1, column=2, rowspan=2, padx=6)
+        # === KEYS ===
+        root.bind('<KeyPress>', lambda e: self.wasd_keys.add(e.keysym.lower()) if e.keysym.lower() in 'wasd' else None)
+        root.bind('<KeyRelease>', lambda e: self.wasd_keys.discard(e.keysym.lower()) if e.keysym.lower() in 'wasd' else None)
 
-        ttk.Separator(bottom, orient="horizontal").grid(row=3, column=0, columnspan=3, sticky="ew", pady=8)
-        self.var_ovren = tk.BooleanVar(value=False)
-        ttk.Checkbutton(bottom, text="Manual Override /cmd_vel", variable=self.var_ovren,
-                        command=self.on_toggle_override).grid(row=4, column=0, columnspan=3, sticky="w")
-        self.ovr_lin = tk.DoubleVar(value=0.0)
-        self.ovr_ang = tk.DoubleVar(value=0.0)
-        ttk.Label(bottom, text="linear.x").grid(row=5, column=0, sticky="e")
-        ttk.Scale(bottom, from_=-1.0, to=1.0, orient="horizontal", variable=self.ovr_lin,
-                  command=lambda _: self.publish_override_if_enabled()).grid(row=5, column=1, sticky="ew", padx=6)
-        ttk.Label(bottom, text="angular.z").grid(row=6, column=0, sticky="e")
-        ttk.Scale(bottom, from_=-3.5, to=3.5, orient="horizontal", variable=self.ovr_ang,
-                  command=lambda _: self.publish_override_if_enabled()).grid(row=6, column=1, sticky="ew", padx=6)
-        bottom.grid_columnconfigure(1, weight=1)
-
-        def refresh():
-            st = self.status
-            self.lbl_dom.config(text=f"DOMAIN: {st['domain_id']}")
-            self.lbl_rmw.config(text=f"RMW: {st['rmw']}")
-            self.lbl_loc.config(text=f"LOCALHOST_ONLY: {st['localhost_only']}")
-            self.lbl_host.config(text=f"Host/IP: {st['host']} / {st['ip']}")
-            self.lbl_nodes.config(text=f"Nodes: {st['node_count']} (others: {len(st['other_nodes'])})")
-            self.lbl_topics.config(text=f"Topics: {st['topic_count']}   /cmd_vel: {'YES' if st['has_cmd_vel'] else 'NO'}")
-
-            self.tree.delete(*self.tree.get_children())
-            for row in list(self.points)[-12:][::-1]:
-                self.tree.insert("", "end", values=row)
-
+        # === UPDATE ===
+        def update():
+            tree.delete(*tree.get_children())
+            for row in list(self.points)[-6:][::-1]:
+                tree.insert("", "end", values=row)
+            
             v = self.last_cmd.linear.x
             w = self.last_cmd.angular.z
-            age = time.time() - self.last_cmd_time if self.last_cmd_time else float("inf")
-            self.lbl_v.config(text=f"linear.x: {v:+.3f} m/s")
-            self.lbl_w.config(text=f"angular.z: {w:+.3f} rad/s")
-            self.lbl_age.config(text=f"age: {age:.2f} s")
-
-            root.after(200, refresh)
-
-        refresh()
+            lbl_v.config(text=f"linear.x: {v:+.3f} m/s")
+            lbl_w.config(text=f"angular.z: {w:+.3f} rad/s")
+            
+            if self.override_enable:
+                keys = ','.join(sorted(self.wasd_keys)) if self.wasd_keys else "-"
+                lbl_wasd.config(text=f"Active | Keys: {keys}")
+            else:
+                lbl_wasd.config(text="W/A/S/D (disabled)")
+            
+            root.after(200, update)
+        
+        update()
         root.mainloop()
 
-    def on_click_start(self):
-        self.pub_start.publish(Empty())
-        self.get_logger().info("▶ Start")
-    
-    def on_click_stop(self):
-        self.pub_stop.publish(Empty())
-        self.get_logger().info("⏸ Stop")
-    
-    def on_click_reset(self):
-        self.pub_reset.publish(Empty())
-        self.get_logger().info("🔄 Reset")
-    
-    def on_toggle_edit(self):
-        self.pub_edit.publish(Bool(data=self.var_edit.get()))
-    
-    def on_apply_scale(self):
+    def _test_ssh(self, ip, label):
+        self.limo_ip = ip
+        try:
+            res = subprocess.run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=2',
+                                  f'{self.limo_user}@{ip}', 'echo OK'],
+                                 capture_output=True, timeout=3)
+            if res.returncode == 0:
+                self.ssh_ok = True
+                label.config(text=f"✅ Connected: {ip}", foreground="green")
+            else:
+                raise Exception()
+        except:
+            self.ssh_ok = False
+            label.config(text="❌ Failed", foreground="red")
+
+    def _apply_scale(self, lin, ang):
         msg = Twist()
-        msg.linear.x = float(self.s_lin.get())
-        msg.angular.z = float(self.s_ang.get())
+        msg.linear.x = float(lin)
+        msg.angular.z = float(ang)
         self.pub_scale.publish(msg)
-        self.get_logger().info(f"Scale: lin={self.s_lin.get():.2f}, ang={self.s_ang.get():.2f}")
-    
-    def on_toggle_override(self):
-        self.pub_ovr_en.publish(Bool(data=self.var_ovren.get()))
-        if self.var_ovren.get():
-            self.publish_override_if_enabled()
-    
-    def publish_override_if_enabled(self):
-        if not self.var_ovren.get():
+        self.get_logger().info(f"Scale: {lin:.2f}, {ang:.2f}")
+
+    def _toggle_ovr(self, enabled):
+        self.override_enable = enabled
+        self.pub_ovr_en.publish(Bool(data=enabled))
+        if not enabled:
+            self.wasd_keys.clear()
+
+    def _apply_restart(self, domain, rmw, localhost, limo_ip):
+        msg = f"Restart with:\nDOMAIN: {domain}\nRMW: {rmw}\nLOCALHOST: {localhost}\n\n"
+        msg += "노트북: 자동 재시작\n"
+        if self.ssh_ok:
+            msg += f"LIMO ({limo_ip}): 자동 재시작"
+        else:
+            msg += "LIMO: 수동 재시작 필요"
+        
+        if not messagebox.askyesno("Restart", msg):
             return
-        msg = Twist()
-        msg.linear.x = float(self.ovr_lin.get())
-        msg.angular.z = float(self.ovr_ang.get())
-        self.pub_ovr.publish(msg)
+        
+        # Update bashrc
+        bashrc = os.path.expanduser("~/.bashrc")
+        with open(bashrc, 'r') as f:
+            lines = f.readlines()
+        
+        lines = [l for l in lines if not any(x in l for x in ['ROS_DOMAIN_ID', 'RMW_IMPLEMENTATION', 'ROS_LOCALHOST_ONLY'])]
+        lines.append(f"\nexport ROS_DOMAIN_ID={domain}\n")
+        lines.append(f"export RMW_IMPLEMENTATION={rmw}\n")
+        lines.append(f"export ROS_LOCALHOST_ONLY={localhost}\n")
+        
+        with open(bashrc, 'w') as f:
+            f.writelines(lines)
+        
+        # LIMO restart
+        if self.ssh_ok:
+            cmd = f"""
+sed -i '/ROS_DOMAIN_ID/d' ~/.bashrc; sed -i '/RMW_IMPLEMENTATION/d' ~/.bashrc; sed -i '/ROS_LOCALHOST_ONLY/d' ~/.bashrc
+echo 'export ROS_DOMAIN_ID={domain}' >> ~/.bashrc
+echo 'export RMW_IMPLEMENTATION={rmw}' >> ~/.bashrc
+echo 'export ROS_LOCALHOST_ONLY={localhost}' >> ~/.bashrc
+pkill -f path_follower; sleep 1
+source ~/.bashrc; cd /home/limo/path_follower; source install/setup.bash
+nohup ros2 launch path_follower_pkg path_follower.launch.py > /tmp/pf.log 2>&1 &
+"""
+            subprocess.Popen(['ssh', f'{self.limo_user}@{limo_ip}', cmd])
+        
+        # Local restart
+        subprocess.run(['pkill', '-f', 'path_follower'])
+        subprocess.Popen(['bash', '-c',
+                          'sleep 2 && source ~/.bashrc && '
+                          'source ~/path_follower/install/setup.bash && '
+                          'ros2 launch path_follower_pkg path_follower.launch.py &'])
+        
+        os.kill(os.getpid(), signal.SIGTERM)
 
 
 def main(args=None):
@@ -268,8 +315,9 @@ def main(args=None):
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
-    node.destroy_node()
-    rclpy.shutdown()
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == "__main__":
