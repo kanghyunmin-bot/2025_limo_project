@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-메인 경로 추종 노드
+메인 경로 추종 노드 - Scale & Override 지원
 """
 import math
 import rclpy
@@ -49,6 +49,12 @@ class InteractiveFollower(Node):
         self.is_running = False
         self.is_edit_mode = False
 
+        # Scale & Override 상태
+        self.scale_linear = 1.0
+        self.scale_angular = 1.0
+        self.override_enabled = False
+        self.override_twist = Twist()
+
         # Publisher
         self.pub_cmd = self.create_publisher(Twist, '/cmd_vel', 10)
         self.pub_odom = self.create_publisher(Odometry, '/odom', 10)
@@ -72,6 +78,14 @@ class InteractiveFollower(Node):
         self.sub_edit = self.create_subscription(
             Bool, '/path_follower/edit_mode', self.on_edit_mode, 10)
 
+        # Subscriber - Scale & Override
+        self.sub_scale = self.create_subscription(
+            Twist, '/path_follower/cmd_vel_scale', self.on_scale, 10)
+        self.sub_override = self.create_subscription(
+            Twist, '/path_follower/cmd_vel_override', self.on_override, 10)
+        self.sub_override_enable = self.create_subscription(
+            Bool, '/path_follower/override_enable', self.on_override_enable, 10)
+
         # 타이머
         self.timer = self.create_timer(self.dt, self.on_timer)
 
@@ -79,7 +93,7 @@ class InteractiveFollower(Node):
             "Interactive follower ready.\n"
             "  - RViz 'Publish Point'로 경로 생성\n"
             "  - '2D Pose Estimate'로 시작자세 설정\n"
-            "  - GUI로 Start/Stop/Reset/Edit 제어"
+            "  - GUI로 Start/Stop/Reset/Edit/Scale/Override 제어"
         )
 
     def _load_parameters(self):
@@ -167,10 +181,39 @@ class InteractiveFollower(Node):
         else:
             self.get_logger().info("✏️  Edit mode disabled")
 
+    # ========== Scale & Override 콜백 ==========
+
+    def on_scale(self, msg: Twist):
+        """Scale 배율 수신"""
+        self.scale_linear = max(0.0, float(msg.linear.x))
+        self.scale_angular = max(0.0, float(msg.angular.z))
+        self.get_logger().info(f"Scale updated: lin={self.scale_linear:.2f}, ang={self.scale_angular:.2f}")
+
+    def on_override(self, msg: Twist):
+        """Override 명령 수신"""
+        self.override_twist = msg
+
+    def on_override_enable(self, msg: Bool):
+        """Override 활성화/비활성화"""
+        self.override_enabled = bool(msg.data)
+        if self.override_enabled:
+            self.get_logger().info("🎮 Manual override enabled")
+        else:
+            self.get_logger().info("🎮 Manual override disabled")
+
     # ========== 제어 루프 ==========
 
     def on_timer(self):
         self.publish_odom()
+
+        # Override 활성화 시 수동 제어
+        if self.override_enabled:
+            self.publish_cmd(self.override_twist.linear.x, self.override_twist.angular.z)
+            # 오버라이드 중에도 상태 업데이트 (시뮬레이션)
+            self.x += self.override_twist.linear.x * self.dt * math.cos(self.yaw)
+            self.y += self.override_twist.linear.x * self.dt * math.sin(self.yaw)
+            self.yaw = wrap_to_pi(self.yaw + self.override_twist.angular.z * self.dt)
+            return
 
         if not self.is_running or not self.path_manager.have_path:
             self.publish_cmd(0.0, 0.0)
@@ -183,6 +226,7 @@ class InteractiveFollower(Node):
 
         self.s_done = max(self.s_done, idx * self.ds)
 
+        # 제어 명령 계산
         v_cmd, omega_cmd = self.controller.compute_control(
             self.x, self.y, self.yaw,
             self.path_manager.path_xy,
@@ -191,11 +235,16 @@ class InteractiveFollower(Node):
             idx, self.ds, self.s_done, self.path_manager.path_len
         )
 
-        self.publish_cmd(v_cmd, omega_cmd)
+        # Scale 적용
+        v_scaled = v_cmd * self.scale_linear
+        omega_scaled = omega_cmd * self.scale_angular
 
-        self.x += v_cmd * self.dt * math.cos(self.yaw)
-        self.y += v_cmd * self.dt * math.sin(self.yaw)
-        self.yaw = wrap_to_pi(self.yaw + omega_cmd * self.dt)
+        self.publish_cmd(v_scaled, omega_scaled)
+
+        # 내부 상태 적분 (scaled 값으로)
+        self.x += v_scaled * self.dt * math.cos(self.yaw)
+        self.y += v_scaled * self.dt * math.sin(self.yaw)
+        self.yaw = wrap_to_pi(self.yaw + omega_scaled * self.dt)
 
     def publish_cmd(self, v: float, w: float):
         msg = Twist()
