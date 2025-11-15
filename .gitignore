@@ -1,0 +1,17 @@
+# ROS2 빌드 결과물 무시
+build/
+install/
+log/
+
+# Python 캐시
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
