@@ -1,0 +1,236 @@
+Panels:
+  - Class: rviz_common/Displays
+    Help Height: 78
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Global Options1
+        - /Status1
+        - /Grid1
+        - /Odometry1
+        - /Path1
+      Splitter Ratio: 0.5
+    Tree Height: 210
+  - Class: rviz_common/Selection
+    Name: Selection
+  - Class: rviz_common/Tool Properties
+    Expanded:
+      - /2D Pose Estimate1
+      - /Publish Point1
+    Name: Tool Properties
+    Splitter Ratio: 0.588679
+  - Class: rviz_common/Views
+    Expanded:
+      - /Current View1
+    Name: Views
+    Splitter Ratio: 0.5
+Preferences:
+  PromptSaveOnClose: true
+  Screens:
+    - {height: 1080, width: 1920}
+Toolbars:
+  toolButtonStyle: 2
+Visualization Manager:
+  Class: ""
+  Displays:
+    # === Grid 설정 (1000 x 1000, Cell Size 0.1m) ===
+    - Alpha: 0.3
+      Cell Size: 0.1
+      Class: rviz_default_plugins/Grid
+      Color: 160; 160; 164
+      Enabled: true
+      Line Style:
+        Line Width: 0.029999999329447746
+        Value: Lines
+      Name: Grid
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Plane: XY
+      Plane Cell Count: 1000
+      Reference Frame: <Fixed Frame>
+      Value: true
+    
+    # === Odometry (40cm 로봇 화살표 크기 조정) ===
+    - Angle Tolerance: 0.10000000149011612
+      Class: rviz_default_plugins/Odometry
+      Covariance:
+        Orientation:
+          Alpha: 0.5
+          Color: 255; 128; 0
+          Color Style: RGB
+          Frame: Local -XYZ
+          Offset: 1
+          Scale: 1
+          Value: false
+        Position:
+          Alpha: 0.30000001192092896
+          Color: 204; 51; 204
+          Color Style: RGB
+          Scale: 1
+          Value: false
+        Value: false
+      Enabled: true
+      Keep: 200
+      Name: Odometry
+      Position Tolerance: 0.10000000149011612
+      Shape:
+        Alpha: 1
+        Axes Length: 0.15
+        Axes Radius: 0.01
+        Color: 255; 25; 0
+        Head Length: 0.15
+        Head Radius: 0.05
+        Shaft Length: 0.25
+        Shaft Radius: 0.025
+        Value: Arrow
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /odom
+      Value: true
+    
+    # === Path (초록색 경로) ===
+    - Alpha: 1
+      Buffer Length: 1
+      Class: rviz_default_plugins/Path
+      Color: 0; 255; 0
+      Enabled: true
+      Head Diameter: 0.15
+      Head Length: 0.10
+      Head Radius: 0.03
+      Line Style: Lines
+      Line Width: 0.04
+      Name: Path
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Pose Color: 255; 85; 255
+      Pose Style: None
+      Radius: 0.015
+      Shaft Diameter: 0.08
+      Shaft Length: 0.08
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /path_odom
+      Value: true
+    
+    # === RobotModel (40cm 휠베이스) ===
+    - Alpha: 1
+      Class: rviz_default_plugins/RobotModel
+      Collision Margin: 0.009999999776482582
+      Enabled: true
+      Links:
+        All Links Enabled: true
+        Expanded:
+          - base_link
+        base_link:
+          Alpha: 1
+          Show Axes: true
+          Show Trail: false
+        odom:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+      Name: RobotModel
+      TF Prefix: ""
+      Update Interval: 0
+      Value: true
+      Visual Enabled: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: odom
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+    
+    # === 2D Pose Estimate (로봇 위치 세팅) ===
+    - Class: rviz_default_plugins/SetInitialPose
+      Theta std deviation: 0.26179938554763794
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /initialpose
+      X std deviation: 0.5
+      Y std deviation: 0.5
+    
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /goal_pose
+    
+    # === Publish Point (좌표 클릭) ===
+    - Class: rviz_default_plugins/PublishPoint
+      Single click publishing: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /clicked_point
+  
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 10
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.05999999865889549
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.05000000074505806
+      Invert Z Axis: false
+      Name: Current View
+      Near Clip Distance: 0.009999999776482582
+      Pitch: 1.5707963267948966
+      Target Frame: <Fixed Frame>
+      Value: Orbit (rviz_default_plugins)
+      Yaw: 1.5707963267948966
+    Saved: ~
+
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 1080
+  Hide Left Dock: false
+  Hide Right Dock: false
+  QMainWindow State: 000000ff00000000fd0000000100000000000002f000000394fc0100000003fc000001c5000001a900fffffffc0100000002fc00000000000001b80000012dfa000000020100000010fb0000001201500050006f0072007400730000000000ffffffff0000000000000000fb0000001001560069006500770073010000018a000001b90000010c00fffffffc00000000000002f00000000000fffffffa000000000100000002fb0000001e00540061006b0020005a0045005300200054006f006f006c00700061006e0065010000029f000000d00000000000000000fb000000220050006100740068005f0046006f006c006c006f007700650072001000000000000002f00000000000000000000000300000005c0000000a8fc0100000001fb0000001200440069007300700006c006100790073010000000000000005c00000014300ffffff00000001000000d00000039400fffffffc0100000001fb0000000e00490043004f0045020000024f000003940000000000000000000004f00000039400000004000ffffffaabbffffff0000
+  Selection:
+    collapsed: false
+  Tool Properties:
+    collapsed: false
+  Views:
+    collapsed: false
+  Width: 1920
