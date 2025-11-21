@@ -1,28 +1,39 @@
 #!/usr/bin/env python3
 import math
-from ackermann_msgs.msg import AckermannDriveStamped
-from builtin_interfaces.msg import Time
-
 
 class PathController:
+    """Pure Pursuit 제어기"""
+    
     def __init__(self, k_ld=0.5, wheelbase=0.4):
+        """
+        Args:
+            k_ld: Lookahead distance 게인
+            wheelbase: 축간 거리 (Ackermann용)
+        """
         self.k_ld = k_ld
         self.wheelbase = wheelbase
     
     def compute_control(self, robot_pose, path, target_speed, node):
         """
-        Pure Pursuit 제어
-        robot_pose: [x, y, theta]
-        path: [[x1, y1], [x2, y2], ...]
-        target_speed: 목표 속도
-        node: ROS2 노드 (시간 정보용)
+        Pure Pursuit 제어 계산
+        
+        Args:
+            robot_pose: [x, y, theta]
+            path: [[x1, y1], [x2, y2], ...]
+            target_speed: 목표 속도 (m/s)
+            node: ROS2 노드
+        
+        Returns:
+            linear_v: 선속도
+            angular_z: 각속도
+            steering_angle: 조향각 (Ackermann용, 별도 반환)
         """
         if len(path) < 2:
-            return 0.0, 0.0, None
+            return 0.0, 0.0, 0.0
         
         x, y, theta = robot_pose
         
-        # Lookahead distance
+        # Lookahead distance 계산
         lookahead_distance = self.k_ld * target_speed + 0.3
         lookahead_distance = max(lookahead_distance, 0.5)
         
@@ -52,7 +63,6 @@ class PathController:
         dx = lookahead_point[0] - x
         dy = lookahead_point[1] - y
         
-        # 로봇 기준 lookahead point
         local_x = math.cos(theta) * dx + math.sin(theta) * dy
         local_y = -math.sin(theta) * dx + math.cos(theta) * dy
         
@@ -62,23 +72,12 @@ class PathController:
         # Steering angle 계산 (Ackermann)
         steering_angle = math.atan(curvature * self.wheelbase)
         
-        # Steering angle 제한
+        # Steering angle 제한 (±30도)
         max_steering = math.radians(30)
         steering_angle = max(-max_steering, min(max_steering, steering_angle))
         
         # Angular velocity 계산 (Differential)
         angular_z = target_speed * curvature
         
-        # Ackermann 메시지 생성
-        ackermann_msg = AckermannDriveStamped()
-        ackermann_msg.header.frame_id = 'base_link'
-        
-        # ✅ 올바른 stamp 설정
-        now = node.get_clock().now()
-        ackermann_msg.header.stamp = Time(sec=now.seconds_nanoseconds()[0], 
-                                           nanosec=now.seconds_nanoseconds()[1])
-        
-        ackermann_msg.drive.speed = float(target_speed)
-        ackermann_msg.drive.steering_angle = float(steering_angle)
-        
-        return target_speed, angular_z, ackermann_msg
+        # ✅ Ackermann 모드면 조향각 반환, Differential 모드면 각속도 반환
+        return target_speed, angular_z, steering_angle

@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Twist, PointStamped, PoseWithCovarianceStamped, PoseStamped
+from geometry_msgs.msg import Twist, PointStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Path, Odometry
-from ackermann_msgs.msg import AckermannDriveStamped
-from std_msgs.msg import Empty, Bool, String, Float32
+from std_msgs.msg import Empty, String, Float32
 import math
 
 from .path_manager import PathManager
 from .path_controller import PathController
 from .stanley_controller import StanleyController
 from .math_utils import quaternion_to_yaw
+from .path_recorder import PathRecorder
+from .accuracy_utils import AccuracyCalculator
+
 
 class PathFollower(Node):
     
@@ -24,32 +26,28 @@ class PathFollower(Node):
         
         self.control_mode = self.get_parameter('control_mode').value
         self.drive_mode = self.get_parameter('drive_mode').value
-        wheelbase = self.get_parameter('wheelbase').value
+        self.wheelbase = self.get_parameter('wheelbase').value
         self.arrival_threshold = self.get_parameter('arrival_threshold').value
         
         self.path_manager = PathManager(self)
-        self.pure_pursuit_controller = PathController(k_ld=0.5, wheelbase=wheelbase)
-        self.stanley_controller = StanleyController(k_e=1.0, k_h=0.5, wheelbase=wheelbase)
+        self.pure_pursuit_controller = PathController(k_ld=0.5, wheelbase=self.wheelbase)
+        self.stanley_controller = StanleyController(k_e=1.0, k_h=0.5, wheelbase=self.wheelbase)
+        
+        self.path_recorder = PathRecorder(record_interval=0.1)
+        self.accuracy_calculator = AccuracyCalculator()
         
         self.robot_pose = [0.0, 0.0, 0.0]
         self.is_running = False
         self.path_source = 'clicked_point'
         self.interpolation_method = 'spline'
         
-        # 실제 주행 경로 기록
-        self.actual_path = Path()
-        self.actual_path.header.frame_id = 'odom'
-        self.last_recorded_pose = None
-        self.record_interval = 0.1
-        
         # Publishers
-        self.pub_twist = self.create_publisher(Twist, '/cmd_vel', 10)
-        self.pub_ackermann = self.create_publisher(AckermannDriveStamped, '/ackermann_cmd', 10)
+        self.pub_cmd_vel = self.create_publisher(Twist, '/cmd_vel', 10)
         self.pub_path_odom = self.create_publisher(Path, '/path_odom', 10)
         self.pub_global_path = self.create_publisher(Path, '/global_path', 10)
         self.pub_actual_path = self.create_publisher(Path, '/local_path', 10)
         self.pub_accuracy = self.create_publisher(Float32, '/path_accuracy', 10)
-        self.pub_global_accuracy = self.create_publisher(Float32, '/global_accuracy', 10)  # ✅ 전역 정확도
+        self.pub_global_accuracy = self.create_publisher(Float32, '/global_accuracy', 10)
         
         # Subscribers
         self.sub_odom = self.create_subscription(Odometry, '/odom', self.on_odom, 10)
@@ -72,6 +70,10 @@ class PathFollower(Node):
         self.sub_interpolation_method = self.create_subscription(
             String, '/path_follower/interpolation_method', self.on_interpolation_method, 10)
         
+        # ✅ 속도 파라미터 구독 추가
+        self.sub_velocity_params = self.create_subscription(
+            Twist, '/path_follower/velocity_params', self.on_velocity_params, 10)
+        
         self.timer = self.create_timer(0.0167, self.control_loop)
         
         self.get_logger().info(f"🚗 Path Follower: {self.control_mode} | {self.drive_mode} @ 60Hz")
@@ -82,63 +84,9 @@ class PathFollower(Node):
         self.robot_pose[2] = quaternion_to_yaw(msg.pose.pose.orientation)
         
         if self.is_running:
-            self.record_actual_path(msg)
-    
-    def record_actual_path(self, odom_msg):
-        """실제 주행 경로 기록"""
-        current_pose = [odom_msg.pose.pose.position.x, odom_msg.pose.pose.position.y]
-        
-        if self.last_recorded_pose is None:
-            pose_stamped = PoseStamped()
-            pose_stamped.header = odom_msg.header
-            pose_stamped.pose = odom_msg.pose.pose
-            self.actual_path.poses.append(pose_stamped)
-            self.last_recorded_pose = current_pose
-        else:
-            dist = math.hypot(
-                current_pose[0] - self.last_recorded_pose[0],
-                current_pose[1] - self.last_recorded_pose[1]
-            )
-            if dist >= self.record_interval:
-                pose_stamped = PoseStamped()
-                pose_stamped.header = odom_msg.header
-                pose_stamped.pose = odom_msg.pose.pose
-                self.actual_path.poses.append(pose_stamped)
-                self.last_recorded_pose = current_pose
-        
-        self.actual_path.header.stamp = self.get_clock().now().to_msg()
-        self.pub_actual_path.publish(self.actual_path)
-    
-    def calculate_path_accuracy(self, reference_path):
-        """정확도 계산 (공통 함수)"""
-        if len(self.actual_path.poses) < 2:
-            return 100.0
-        
-        if reference_path is None or len(reference_path.poses) < 2:
-            return 100.0
-        
-        total_error = 0.0
-        count = 0
-        
-        for actual_pose in self.actual_path.poses:
-            ax = actual_pose.pose.position.x
-            ay = actual_pose.pose.position.y
-            
-            min_dist = float('inf')
-            for ref_pose in reference_path.poses:
-                px = ref_pose.pose.position.x
-                py = ref_pose.pose.position.y
-                dist = math.hypot(ax - px, ay - py)
-                if dist < min_dist:
-                    min_dist = dist
-            
-            total_error += min_dist
-            count += 1
-        
-        avg_error = total_error / count if count > 0 else 0.0
-        accuracy = max(0.0, 100.0 - (avg_error * 100))
-        
-        return accuracy
+            actual_path = self.path_recorder.record(msg)
+            actual_path.header.stamp = self.get_clock().now().to_msg()
+            self.pub_actual_path.publish(actual_path)
     
     def on_clicked_point(self, msg: PointStamped):
         if self.path_source == 'clicked_point':
@@ -165,7 +113,25 @@ class PathFollower(Node):
     
     def on_interpolation_method(self, msg: String):
         self.interpolation_method = msg.data
+        self.path_manager.interpolation_method = msg.data
         self.get_logger().info(f"🛣️ Interpolation: {self.interpolation_method}")
+    
+    def on_velocity_params(self, msg: Twist):
+        """✅ GUI에서 속도 파라미터 수신"""
+        v_max = msg.linear.x
+        v_min = msg.linear.y
+        
+        # PathManager 속도 업데이트
+        self.path_manager.v_max = v_max
+        self.path_manager.v_min = v_min
+        
+        # 경로가 있으면 속도 프로파일 재계산
+        if len(self.path_manager.global_curvatures) > 0:
+            self.path_manager.velocities = self.path_manager._generate_velocity_profile(
+                self.path_manager.global_curvatures
+            )
+        
+        self.get_logger().info(f"⚙️ Velocity: Max={v_max:.2f} m/s, Min={v_min:.2f} m/s")
     
     def on_init_pose(self, msg: PoseWithCovarianceStamped):
         self.robot_pose[0] = msg.pose.pose.position.x
@@ -174,10 +140,17 @@ class PathFollower(Node):
         self.get_logger().info(f"📍 Robot pose: ({self.robot_pose[0]:.2f}, {self.robot_pose[1]:.2f})")
     
     def on_start(self, msg: Empty):
+        if self.path_manager.get_local_path() is None:
+            self.get_logger().info("⚠️ No path, creating initial 0.4m path...")
+            if self.path_manager.create_initial_path(self.robot_pose):
+                self.get_logger().info("✅ Initial path created")
+            else:
+                self.get_logger().error("❌ Failed to create initial path")
+                return
+        
         if self.path_manager.get_local_path() is not None:
             self.is_running = True
-            self.actual_path.poses.clear()
-            self.last_recorded_pose = None
+            self.path_recorder.reset()
             self.get_logger().info(f"▶️ START ({self.control_mode} + {self.drive_mode})")
         else:
             self.get_logger().warn("⚠️ No path available!")
@@ -185,34 +158,36 @@ class PathFollower(Node):
     def on_stop(self, msg: Empty):
         self.is_running = False
         self.publish_stop_command()
-        
-        # ✅ Local 경로 정확도
-        local_accuracy = self.calculate_path_accuracy(self.path_manager.get_local_path())
-        self.pub_accuracy.publish(Float32(data=local_accuracy))
-        
-        # ✅ Global 경로 정확도
-        global_path = self.path_manager.get_global_path()
-        if global_path is not None:
-            global_accuracy = self.calculate_path_accuracy(global_path)
-            self.pub_global_accuracy.publish(Float32(data=global_accuracy))
-            self.get_logger().info(f"⏸ STOP | Local: {local_accuracy:.2f}% | Global: {global_accuracy:.2f}%")
-        else:
-            self.get_logger().info(f"⏸ STOP | Accuracy: {local_accuracy:.2f}%")
+        self._publish_accuracy()
     
     def on_reset(self, msg: Empty):
         self.is_running = False
         self.path_manager.reset()
-        self.actual_path.poses.clear()
-        self.last_recorded_pose = None
+        self.path_recorder.reset()
         self.publish_stop_command()
         self.get_logger().info("🔄 RESET")
     
+    def _publish_accuracy(self):
+        actual_path = self.path_recorder.get_path()
+        
+        local_accuracy = self.accuracy_calculator.calculate_accuracy(
+            actual_path, self.path_manager.get_local_path()
+        )
+        self.pub_accuracy.publish(Float32(data=local_accuracy))
+        
+        global_path = self.path_manager.get_global_path()
+        if global_path is not None:
+            global_accuracy = self.accuracy_calculator.calculate_accuracy(
+                actual_path, global_path
+            )
+            self.pub_global_accuracy.publish(Float32(data=global_accuracy))
+            self.get_logger().info(f"📊 Local: {local_accuracy:.2f}% | Global: {global_accuracy:.2f}%")
+        else:
+            self.get_logger().info(f"📊 Accuracy: {local_accuracy:.2f}%")
+    
     def publish_stop_command(self):
         twist = Twist()
-        self.pub_twist.publish(twist)
-        
-        ackermann = AckermannDriveStamped()
-        self.pub_ackermann.publish(ackermann)
+        self.pub_cmd_vel.publish(twist)
     
     def control_loop(self):
         """60Hz 제어 루프"""
@@ -247,18 +222,8 @@ class PathFollower(Node):
         if distance_to_goal < self.arrival_threshold:
             self.publish_stop_command()
             self.is_running = False
-            
-            # ✅ 정확도 계산
-            local_accuracy = self.calculate_path_accuracy(self.path_manager.get_local_path())
-            self.pub_accuracy.publish(Float32(data=local_accuracy))
-            
-            global_path = self.path_manager.get_global_path()
-            if global_path is not None:
-                global_accuracy = self.calculate_path_accuracy(global_path)
-                self.pub_global_accuracy.publish(Float32(data=global_accuracy))
-                self.get_logger().info(f"🎉 ARRIVED! | Local: {local_accuracy:.2f}% | Global: {global_accuracy:.2f}%")
-            else:
-                self.get_logger().info(f"🎉 ARRIVED! | Accuracy: {local_accuracy:.2f}%")
+            self._publish_accuracy()
+            self.get_logger().info("🎉 ARRIVED!")
             return
         
         path_points = [(p.pose.position.x, p.pose.position.y) for p in local_path.poses]
@@ -279,25 +244,24 @@ class PathFollower(Node):
         velocity_ref = self.path_manager.get_velocity_at_index(nearest_idx)
         
         try:
-            linear_v, angular_z, ackermann_msg = controller.compute_control(
-                self.robot_pose,
-                path_points,
-                velocity_ref,
-                self
+            linear_v, angular_z, steering_angle = controller.compute_control(
+                self.robot_pose, path_points, velocity_ref, self
             )
             
+            twist = Twist()
+            twist.linear.x = linear_v
+            
             if self.drive_mode == 'ackermann':
-                if ackermann_msg is not None:
-                    self.pub_ackermann.publish(ackermann_msg)
+                twist.angular.z = linear_v * math.tan(steering_angle) / self.wheelbase
             else:
-                twist = Twist()
-                twist.linear.x = linear_v
                 twist.angular.z = angular_z
-                self.pub_twist.publish(twist)
+            
+            self.pub_cmd_vel.publish(twist)
                 
         except Exception as e:
-            self.get_logger().error(f"❌ {self.control_mode.title()} Control Error: {e}")
+            self.get_logger().error(f"❌ Control Error: {e}")
             self.publish_stop_command()
+
 
 def main(args=None):
     rclpy.init(args=args)
@@ -310,6 +274,7 @@ def main(args=None):
     finally:
         node.destroy_node()
         rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()
