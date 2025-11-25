@@ -184,7 +184,7 @@ class PathManager:
         
         try:
             local_bezier_points = split_global_to_local_bezier(
-                self.global_path, robot_pos, lookahead_dist=1.0
+                self.global_path, robot_pos, lookahead_dist=0.5
             )
             
             if local_bezier_points is None or len(local_bezier_points) < 2:

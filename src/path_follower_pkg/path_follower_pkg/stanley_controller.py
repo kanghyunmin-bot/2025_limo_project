@@ -27,7 +27,6 @@ class StanleyController:
         
         robot_x, robot_y, robot_yaw = robot_pose
         
-        # Nearest point
         if not self.initialized:
             nearest_idx = self._find_nearest_global(robot_x, robot_y, path_points)
             self.initialized = True
@@ -41,45 +40,42 @@ class StanleyController:
         ty = target.pose.position.y
         tyaw = quaternion_to_yaw(target.pose.orientation)
         
-        # Heading error
         heading_error = normalize_angle(tyaw - robot_yaw)
         
-        # Cross-track error
         dx = tx - robot_x
         dy = ty - robot_y
         cross_track_error = -math.sin(tyaw) * dx + math.cos(tyaw) * dy
         
-        # Drive mode 확인
         drive_mode = getattr(node, 'drive_mode', 'differential')
         
         if drive_mode == 'differential':
-            # ✅ Differential Drive: 제자리 회전 우선
+            # ✅ 완화된 제자리 회전 조건
+            heading_threshold = math.radians(25)  # 15° → 25° (더 관대하게)
             
-            # 1. Heading error가 크면 제자리 회전
-            heading_threshold = math.radians(15)  # 15도 이상이면 제자리 회전
+            # ✅ 속도에 따른 동적 threshold
+            speed_factor = max(abs(velocity_ref), 0.1)
+            adjusted_threshold = heading_threshold * (0.5 / speed_factor)  # 속도 빠르면 threshold 높음
             
-            if abs(heading_error) > heading_threshold:
-                # 제자리 회전 (linear = 0, angular만)
+            if abs(heading_error) > adjusted_threshold and abs(cross_track_error) > 0.03:
+                # 제자리 회전 (방향 오차 크고 + 경로 많이 벗어남)
                 linear_v = 0.0
-                angular_z = 1.5 * heading_error  # 강한 회전
+                angular_z = 1.2 * heading_error  # 1.5 → 1.2 (약하게)
                 angular_z = np.clip(angular_z, -2.0, 2.0)
                 steering = 0.0
             else:
-                # 방향이 맞으면 전진하면서 미세 조정
+                # 전진하면서 조정
                 linear_v = velocity_ref
                 
-                # Cross-track error 기반 조향
                 v_safe = max(abs(velocity_ref), 0.15)
                 steering = heading_error + math.atan2(self.k_e * cross_track_error, v_safe)
                 steering = np.clip(steering, -math.radians(30), math.radians(30))
                 
-                # Angular velocity
                 curvature = math.tan(steering) / self.wheelbase
                 angular_z = velocity_ref * curvature + 0.3 * heading_error
                 angular_z = np.clip(angular_z, -2.0, 2.0)
         
         else:
-            # ✅ Ackermann: 표준 Stanley
+            # Ackermann
             linear_v = velocity_ref
             
             v_safe = max(abs(velocity_ref), 0.15)
