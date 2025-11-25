@@ -1,83 +1,74 @@
 #!/usr/bin/env python3
 import math
+import numpy as np
+from .path_utils import (
+    find_nearest_point_on_path,
+    quaternion_to_yaw,
+    normalize_angle
+)
 
 class PathController:
-    """Pure Pursuit 제어기"""
-    
-    def __init__(self, k_ld=0.5, wheelbase=0.4):
-        """
-        Args:
-            k_ld: Lookahead distance 게인
-            wheelbase: 축간 거리 (Ackermann용)
-        """
-        self.k_ld = k_ld
+    def __init__(self, k_ld=0.6, k_theta=1.0, wheelbase=0.4):
+        self.k_ld = k_ld        # ✅ Lookahead 계수
+        self.k_theta = k_theta  # ✅ Orientation 게인 (높게)
         self.wheelbase = wheelbase
+        self.last_nearest_idx = 0
+        self.min_velocity = 0.01
     
-    def compute_control(self, robot_pose, path, target_speed, node):
-        """
-        Pure Pursuit 제어 계산
-        
-        Args:
-            robot_pose: [x, y, theta]
-            path: [[x1, y1], [x2, y2], ...]
-            target_speed: 목표 속도 (m/s)
-            node: ROS2 노드
-        
-        Returns:
-            linear_v: 선속도
-            angular_z: 각속도
-            steering_angle: 조향각 (Ackermann용, 별도 반환)
-        """
-        if len(path) < 2:
+    def compute_control(self, robot_pose, path_points, velocity_ref, node):
+        if len(path_points) < 2:
             return 0.0, 0.0, 0.0
         
-        x, y, theta = robot_pose
+        robot_x, robot_y, robot_yaw = robot_pose
+        robot_pos = [robot_x, robot_y]
         
-        # Lookahead distance 계산
-        lookahead_distance = self.k_ld * target_speed + 0.3
-        lookahead_distance = max(lookahead_distance, 0.5)
+        # ✅ 1. Nearest point
+        nearest_idx, _ = find_nearest_point_on_path(
+            robot_pos, robot_yaw, path_points, self.last_nearest_idx
+        )
+        self.last_nearest_idx = nearest_idx
         
-        # 가장 가까운 경로점 찾기
-        min_dist = float('inf')
-        closest_idx = 0
+        # ✅ 2. Lookahead distance (적당히)
+        lookahead_dist = self.k_ld * velocity_ref + 0.3
+        lookahead_dist = np.clip(lookahead_dist, 0.3, 1.5)
         
-        for i, (px, py) in enumerate(path):
-            dist = math.hypot(px - x, py - y)
-            if dist < min_dist:
-                min_dist = dist
-                closest_idx = i
+        # ✅ 3. Lookahead point
+        accumulated = 0.0
+        target_idx = nearest_idx
         
-        # Lookahead point 찾기
-        lookahead_point = None
-        for i in range(closest_idx, len(path)):
-            px, py = path[i]
-            dist = math.hypot(px - x, py - y)
-            if dist >= lookahead_distance:
-                lookahead_point = (px, py)
+        for i in range(nearest_idx, len(path_points) - 1):
+            p1 = path_points[i].pose.position
+            p2 = path_points[i+1].pose.position
+            seg_len = math.hypot(p2.x - p1.x, p2.y - p1.y)
+            accumulated += seg_len
+            if accumulated >= lookahead_dist:
+                target_idx = i + 1
                 break
         
-        if lookahead_point is None:
-            lookahead_point = path[-1]
+        target_idx = min(target_idx, len(path_points) - 1)
+        target_pose = path_points[target_idx]
         
-        # 로봇 좌표계로 변환
-        dx = lookahead_point[0] - x
-        dy = lookahead_point[1] - y
+        target_x = target_pose.pose.position.x
+        target_y = target_pose.pose.position.y
+        target_yaw = quaternion_to_yaw(target_pose.pose.orientation)
         
-        local_x = math.cos(theta) * dx + math.sin(theta) * dy
-        local_y = -math.sin(theta) * dx + math.cos(theta) * dy
+        # ✅ 4. Pure Pursuit angle
+        alpha = math.atan2(target_y - robot_y, target_x - robot_x) - robot_yaw
+        alpha = normalize_angle(alpha)
         
-        # 곡률 계산
-        curvature = 2.0 * local_y / (lookahead_distance ** 2)
+        # ✅ 5. Orientation error (강하게)
+        orientation_error = normalize_angle(target_yaw - robot_yaw)
         
-        # Steering angle 계산 (Ackermann)
-        steering_angle = math.atan(curvature * self.wheelbase)
+        # ✅ 6. Steering angle
+        steering = math.atan2(2.0 * self.wheelbase * math.sin(alpha), lookahead_dist)
+        steering += self.k_theta * orientation_error  # ✅ 방향 강화
         
-        # Steering angle 제한 (±30도)
-        max_steering = math.radians(30)
-        steering_angle = max(-max_steering, min(max_steering, steering_angle))
+        max_steering = math.radians(35)
+        steering = np.clip(steering, -max_steering, max_steering)
         
-        # Angular velocity 계산 (Differential)
-        angular_z = target_speed * curvature
+        # ✅ 7. Angular velocity
+        v_safe = max(abs(velocity_ref), self.min_velocity)
+        angular_z = (2.0 * v_safe * math.sin(steering)) / self.wheelbase
+        angular_z = np.clip(angular_z, -2.5, 2.5)
         
-        # ✅ Ackermann 모드면 조향각 반환, Differential 모드면 각속도 반환
-        return target_speed, angular_z, steering_angle
+        return velocity_ref, angular_z, steering
