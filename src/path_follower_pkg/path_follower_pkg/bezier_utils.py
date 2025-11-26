@@ -31,7 +31,7 @@ def _distance_point_to_segment(pt, a, b):
     return np.linalg.norm(pt - proj), proj
 
 
-def _apply_constraint_offset(control_points, constraints, avoid_margin=0.35, max_offset=0.6):
+def _apply_constraint_offset(control_points, constraints, avoid_margin=0.45, max_offset=0.8):
     if not constraints:
         return control_points
 
@@ -47,6 +47,12 @@ def _apply_constraint_offset(control_points, constraints, avoid_margin=0.35, max
     offset_vec = np.zeros(2)
 
     for cp in constraints:
+        # 전방(경로 진행방향 90도 내) 장애물만 반영
+        ahead_vec = cp - p0
+        proj = np.dot(ahead_vec, path_dir)
+        if proj < 0:
+            continue
+
         dist, _ = _distance_point_to_segment(cp, p0, p3)
         if dist >= avoid_margin:
             continue
@@ -55,7 +61,9 @@ def _apply_constraint_offset(control_points, constraints, avoid_margin=0.35, max
         side_sign = 1.0 if side >= 0 else -1.0
 
         strength = (avoid_margin - dist) / avoid_margin
-        offset_vec += normal * side_sign * strength
+        # 가까울수록 강하게, 전방일수록 가중
+        forward_weight = np.clip(proj / (path_norm + 1e-6), 0.2, 1.0)
+        offset_vec += normal * side_sign * strength * forward_weight
 
     norm_offset = np.linalg.norm(offset_vec)
     if norm_offset < 1e-6:
@@ -132,8 +140,9 @@ def split_global_to_local_bezier(global_path, robot_pos, lookahead_dist=0.5, con
         min_dist_to_original = np.min(np.linalg.norm(segment_points - bp, axis=1))
         max_deviation = max(max_deviation, min_dist_to_original)
     
-    # 10cm 이상 벗어나면 원본 segment 반환
-    if max_deviation > 0.1:
+    # 제약 기반 회피 시 허용 편차를 넉넉히, 아닐 때는 10cm로 제한
+    deviation_limit = 0.25 if constraints else 0.1
+    if max_deviation > deviation_limit:
         return segment_points
     
     return bezier_points

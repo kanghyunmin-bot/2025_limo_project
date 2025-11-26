@@ -252,8 +252,16 @@ class PathFollower(Node):
     def _execute_control(self, local_path):
         path_points = local_path.poses
         controller = self.controllers[self.control_mode]
-        
+
         velocity_ref = self.path_manager.v_max
+
+        # ✅ 장애물 근접 시 속도 완화 (경로 틀기로도 못피할 때 급정지 방지)
+        nearest_cp = self.path_manager.nearest_constraint_distance(self.robot_pose[:2])
+        if nearest_cp is not None:
+            if nearest_cp < 0.25:
+                velocity_ref = 0.0
+            elif nearest_cp < 0.5:
+                velocity_ref = max(self.path_manager.v_min, velocity_ref * 0.35)
         
         try:
             linear_v, angular_z, steering_angle = controller.compute_control(

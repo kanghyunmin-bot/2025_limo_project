@@ -268,6 +268,13 @@ class PathManager:
     def update_constraint_points(self, constraint_points):
         self.constraint_points = constraint_points
 
+    def nearest_constraint_distance(self, robot_pos):
+        if not self.constraint_points:
+            return None
+
+        robot_xy = np.array(robot_pos)
+        return min(np.linalg.norm(cp - robot_xy) for cp in self.constraint_points)
+
     def get_local_path(self):
         return self.local_path
     
