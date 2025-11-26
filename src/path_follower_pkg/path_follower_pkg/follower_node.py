@@ -3,7 +3,7 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist, PointStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Path, Odometry
-from sensor_msgs.msg import PointCloud2
+from sensor_msgs.msg import PointCloud2, LaserScan
 from std_msgs.msg import Empty, String, Float32
 import math
 import numpy as np
@@ -28,7 +28,8 @@ class PathFollower(Node):
         self.declare_parameter('wheelbase', 0.4)
         self.declare_parameter('arrival_threshold', 0.15)
 
-        self.declare_parameter('lidar_topic', '/lidar/points')
+        self.declare_parameter('lidar_topic', '/scan')
+        self.declare_parameter('lidar_message_type', 'scan')  # 'scan' or 'pointcloud'
         self.declare_parameter('enable_dynamic_avoidance', True)
         
         # ✅ 주기 설정
@@ -45,6 +46,7 @@ class PathFollower(Node):
         self.local_planner_freq = self.get_parameter('local_planner_frequency').value
         self.global_publish_freq = self.get_parameter('global_publish_frequency').value
         self.lidar_topic = self.get_parameter('lidar_topic').value
+        self.lidar_message_type = str(self.get_parameter('lidar_message_type').value).lower()
         self.enable_dynamic_avoidance = self.get_parameter('enable_dynamic_avoidance').value
         
         # Components
@@ -96,7 +98,15 @@ class PathFollower(Node):
         self.sub_init_pose = self.create_subscription(PoseWithCovarianceStamped, '/initialpose', self.on_init_pose, 10)
 
         if self.enable_dynamic_avoidance:
-            self.sub_lidar = self.create_subscription(PointCloud2, self.lidar_topic, self.on_pointcloud, 10)
+            if self.lidar_message_type == 'pointcloud':
+                self.sub_lidar = self.create_subscription(PointCloud2, self.lidar_topic, self.on_pointcloud, 10)
+            elif self.lidar_message_type == 'scan':
+                self.sub_lidar = self.create_subscription(LaserScan, self.lidar_topic, self.on_scan, 10)
+            else:
+                self.get_logger().warn(
+                    f"Unknown lidar_message_type '{self.lidar_message_type}', defaulting to LaserScan"
+                )
+                self.sub_lidar = self.create_subscription(LaserScan, self.lidar_topic, self.on_scan, 10)
         
         self.sub_start = self.create_subscription(Empty, '/path_follower/start', self.on_start, 10)
         self.sub_stop = self.create_subscription(Empty, '/path_follower/stop', self.on_stop, 10)
@@ -134,6 +144,18 @@ class PathFollower(Node):
         self.robot_pose[2] = quaternion_to_yaw(msg.pose.pose.orientation)
 
     def on_pointcloud(self, msg: PointCloud2):
+        if not self.enable_dynamic_avoidance:
+            return
+
+        constraint_points_base = self.constraint_filter.build_constraints(msg)
+        if not constraint_points_base:
+            self.path_manager.update_constraint_points([])
+            return
+
+        constraint_points_odom = self._transform_constraints_to_odom(constraint_points_base)
+        self.path_manager.update_constraint_points(constraint_points_odom)
+
+    def on_scan(self, msg: LaserScan):
         if not self.enable_dynamic_avoidance:
             return
 
