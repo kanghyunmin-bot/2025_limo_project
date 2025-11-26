@@ -32,10 +32,20 @@ def _distance_point_to_segment(pt, a, b):
 
 
 def _apply_constraint_offset(control_points, constraints, avoid_margin=0.45, max_offset=0.8):
+    """
+    제약(cp)이 Bézier 구간을 덮을 때만 중간 제어점(P1, P2)만 경로 밖으로 밀어낸다.
+
+    - P0(로봇 위치)와 P3(글로벌 경로 복귀점)는 항상 고정
+    - P1은 시작 쪽 회피, P2는 끝점 쪽 회피를 주로 담당
+    """
+
     if not constraints:
         return control_points
 
-    p0, p1, p2, p3 = control_points
+    # 원본 제어점은 그대로 두고 중간 제어점만 이동시키기 위해 사본 사용
+    cp_array = control_points.copy()
+    p0, p1, p2, p3 = cp_array
+
     path_vec = p3 - p0
     path_norm = np.linalg.norm(path_vec)
     if path_norm < 1e-6:
@@ -44,37 +54,53 @@ def _apply_constraint_offset(control_points, constraints, avoid_margin=0.45, max
     path_dir = path_vec / path_norm
     normal = np.array([-path_dir[1], path_dir[0]])
 
-    offset_vec = np.zeros(2)
+    # 제약과 충돌하는지 먼저 확인하기 위해 기본 Bézier를 생성
+    base_curve = bezier_curve(control_points, num_points=40)
 
+    def _closest_to_curve(cp):
+        return float(np.min(np.linalg.norm(base_curve - cp, axis=1)))
+
+    overlapping = []
     for cp in constraints:
-        # 전방(경로 진행방향 90도 내) 장애물만 반영
+        # 기본 Bézier가 cp 근처(avoid_margin)로 스쳐 지나갈 때만 회피 적용
+        curve_dist = _closest_to_curve(cp)
+        if curve_dist < avoid_margin:
+            overlapping.append((cp, curve_dist))
+
+    if not overlapping:
+        return control_points
+
+    offset_p1 = np.zeros(2)
+    offset_p2 = np.zeros(2)
+
+    for cp, curve_dist in overlapping:
         ahead_vec = cp - p0
         proj = np.dot(ahead_vec, path_dir)
-        if proj < 0:
-            continue
-
-        dist, _ = _distance_point_to_segment(cp, p0, p3)
-        if dist >= avoid_margin:
+        if proj < -0.1:  # 뒤쪽 장애물은 무시
             continue
 
         side = np.cross(path_dir, cp - p0)
         side_sign = 1.0 if side >= 0 else -1.0
 
-        strength = (avoid_margin - dist) / avoid_margin
-        # 가까울수록 강하게, 전방일수록 가중
-        forward_weight = np.clip(proj / (path_norm + 1e-6), 0.2, 1.0)
-        offset_vec += normal * side_sign * strength * forward_weight
+        strength = (avoid_margin - curve_dist) / avoid_margin
+        along = np.clip(proj / (path_norm + 1e-6), 0.0, 1.0)
+        offset_dir = normal * side_sign * strength
 
-    norm_offset = np.linalg.norm(offset_vec)
-    if norm_offset < 1e-6:
-        return control_points
+        # 시작/끝 쪽 제어점을 분리해서 밀기
+        offset_p1 += offset_dir * max(0.25, 1.0 - along)
+        offset_p2 += offset_dir * max(0.25, along)
 
-    clipped = min(norm_offset, max_offset)
-    offset_vec = offset_vec / norm_offset * clipped
-    control_points[1] = control_points[1] + offset_vec
-    control_points[2] = control_points[2] + offset_vec
+    def _clip_offset(vec):
+        norm = np.linalg.norm(vec)
+        if norm < 1e-6:
+            return np.zeros_like(vec)
+        return vec / norm * min(norm, max_offset)
 
-    return control_points
+    cp_array[1] = p1 + _clip_offset(offset_p1)
+    cp_array[2] = p2 + _clip_offset(offset_p2)
+
+    # P0, P3는 그대로 유지 → 글로벌 경로 복귀 확보
+    return cp_array
 
 
 def split_global_to_local_bezier(global_path, robot_pos, lookahead_dist=0.5, constraints=None):
