@@ -3,6 +3,7 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist, PointStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Path, Odometry
+from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import Empty, String, Float32
 import math
 import numpy as np
@@ -14,6 +15,7 @@ from .stanley_controller import StanleyController
 from .math_utils import quaternion_to_yaw
 from .path_recorder import PathRecorder
 from .accuracy_utils import AccuracyCalculator
+from .lidar_constraint_filter import LidarConstraintFilter
 
 
 class PathFollower(Node):
@@ -25,6 +27,9 @@ class PathFollower(Node):
         self.declare_parameter('drive_mode', 'differential')
         self.declare_parameter('wheelbase', 0.4)
         self.declare_parameter('arrival_threshold', 0.15)
+
+        self.declare_parameter('lidar_topic', '/lidar/points')
+        self.declare_parameter('enable_dynamic_avoidance', True)
         
         # ✅ 주기 설정
         self.declare_parameter('controller_frequency', 60.0)  # 제어 주기
@@ -39,6 +44,8 @@ class PathFollower(Node):
         self.controller_freq = self.get_parameter('controller_frequency').value
         self.local_planner_freq = self.get_parameter('local_planner_frequency').value
         self.global_publish_freq = self.get_parameter('global_publish_frequency').value
+        self.lidar_topic = self.get_parameter('lidar_topic').value
+        self.enable_dynamic_avoidance = self.get_parameter('enable_dynamic_avoidance').value
         
         # Components
         self.path_manager = PathManager(self)
@@ -49,6 +56,7 @@ class PathFollower(Node):
         
         self.path_recorder = PathRecorder(record_interval=0.1)
         self.accuracy_calculator = AccuracyCalculator()
+        self.constraint_filter = LidarConstraintFilter()
         
         # State
         self.robot_pose = np.array([0.0, 0.0, 0.0])
@@ -86,6 +94,9 @@ class PathFollower(Node):
         self.sub_clicked_point = self.create_subscription(PointStamped, '/clicked_point', self.on_clicked_point, 10)
         self.sub_planner_path = self.create_subscription(Path, '/planner/path', self.on_planner_path, 10)
         self.sub_init_pose = self.create_subscription(PoseWithCovarianceStamped, '/initialpose', self.on_init_pose, 10)
+
+        if self.enable_dynamic_avoidance:
+            self.sub_lidar = self.create_subscription(PointCloud2, self.lidar_topic, self.on_pointcloud, 10)
         
         self.sub_start = self.create_subscription(Empty, '/path_follower/start', self.on_start, 10)
         self.sub_stop = self.create_subscription(Empty, '/path_follower/stop', self.on_stop, 10)
@@ -121,6 +132,18 @@ class PathFollower(Node):
         self.robot_pose[0] = msg.pose.pose.position.x
         self.robot_pose[1] = msg.pose.pose.position.y
         self.robot_pose[2] = quaternion_to_yaw(msg.pose.pose.orientation)
+
+    def on_pointcloud(self, msg: PointCloud2):
+        if not self.enable_dynamic_avoidance:
+            return
+
+        constraint_points_base = self.constraint_filter.build_constraints(msg)
+        if not constraint_points_base:
+            self.path_manager.update_constraint_points([])
+            return
+
+        constraint_points_odom = self._transform_constraints_to_odom(constraint_points_base)
+        self.path_manager.update_constraint_points(constraint_points_odom)
     
     def on_path_source(self, msg: String):
         if msg.data in ['clicked_point', 'planner_path']:
@@ -144,6 +167,14 @@ class PathFollower(Node):
     def on_velocity_params(self, msg: Twist):
         self.path_manager.v_max = msg.linear.x
         self.path_manager.v_min = msg.linear.y
+
+    def _transform_constraints_to_odom(self, constraint_points_base):
+        yaw = self.robot_pose[2]
+        c, s = math.cos(yaw), math.sin(yaw)
+        rot = np.array([[c, -s], [s, c]])
+        translation = self.robot_pose[:2]
+
+        return [translation + rot.dot(pt) for pt in constraint_points_base]
     
     def on_start(self, msg: Empty):
         if self.path_manager.get_local_path() is None:

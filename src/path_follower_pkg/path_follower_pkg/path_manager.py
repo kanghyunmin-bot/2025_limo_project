@@ -29,6 +29,7 @@ class PathManager:
         self.local_path = None
         self.velocities = []
         self.global_curvatures = []
+        self.constraint_points = []
         
         self.ackermann_planner = AckermannPathPlanner()
         self.interpolation_method = 'spline'
@@ -184,7 +185,10 @@ class PathManager:
         
         try:
             local_bezier_points = split_global_to_local_bezier(
-                self.global_path, robot_pos, lookahead_dist=0.5
+                self.global_path,
+                robot_pos,
+                lookahead_dist=0.5,
+                constraints=self.constraint_points,
             )
             
             if local_bezier_points is None or len(local_bezier_points) < 2:
@@ -261,6 +265,9 @@ class PathManager:
     def set_robot_start(self, robot_pos):
         self.robot_start_pos = robot_pos
 
+    def update_constraint_points(self, constraint_points):
+        self.constraint_points = constraint_points
+
     def get_local_path(self):
         return self.local_path
     
@@ -279,3 +286,4 @@ class PathManager:
         self.local_path = None
         self.velocities.clear()
         self.global_curvatures.clear()
+        self.constraint_points.clear()

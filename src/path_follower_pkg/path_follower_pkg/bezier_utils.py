@@ -20,9 +20,58 @@ def bezier_curve(control_points, num_points=50):
     return curve
 
 
-def split_global_to_local_bezier(global_path, robot_pos, lookahead_dist=0.5):
+def _distance_point_to_segment(pt, a, b):
+    ab = b - a
+    denom = np.dot(ab, ab)
+    if denom < 1e-9:
+        return np.linalg.norm(pt - a), a
+
+    t = np.clip(np.dot(pt - a, ab) / denom, 0.0, 1.0)
+    proj = a + t * ab
+    return np.linalg.norm(pt - proj), proj
+
+
+def _apply_constraint_offset(control_points, constraints, avoid_margin=0.35, max_offset=0.6):
+    if not constraints:
+        return control_points
+
+    p0, p1, p2, p3 = control_points
+    path_vec = p3 - p0
+    path_norm = np.linalg.norm(path_vec)
+    if path_norm < 1e-6:
+        return control_points
+
+    path_dir = path_vec / path_norm
+    normal = np.array([-path_dir[1], path_dir[0]])
+
+    offset_vec = np.zeros(2)
+
+    for cp in constraints:
+        dist, _ = _distance_point_to_segment(cp, p0, p3)
+        if dist >= avoid_margin:
+            continue
+
+        side = np.cross(path_dir, cp - p0)
+        side_sign = 1.0 if side >= 0 else -1.0
+
+        strength = (avoid_margin - dist) / avoid_margin
+        offset_vec += normal * side_sign * strength
+
+    norm_offset = np.linalg.norm(offset_vec)
+    if norm_offset < 1e-6:
+        return control_points
+
+    clipped = min(norm_offset, max_offset)
+    offset_vec = offset_vec / norm_offset * clipped
+    control_points[1] = control_points[1] + offset_vec
+    control_points[2] = control_points[2] + offset_vec
+
+    return control_points
+
+
+def split_global_to_local_bezier(global_path, robot_pos, lookahead_dist=0.5, constraints=None):
     """
-    ✅ 개선된 Local Bézier: shortcut 방지
+    ✅ 개선된 Local Bézier: shortcut 방지 + 제약점 기반 경로 틀기
     """
     if global_path is None or len(global_path.poses) < 2:
         return None
@@ -66,8 +115,11 @@ def split_global_to_local_bezier(global_path, robot_pos, lookahead_dist=0.5):
     P1 = segment_points[n // 4]   # 1/4 지점 (실제 경로 위)
     P2 = segment_points[3 * n // 4]  # 3/4 지점 (실제 경로 위)
     P3 = segment_points[-1]       # 끝점
-    
+
     control_points = np.array([P0, P1, P2, P3])
+
+    # ✅ 동적 장애물 cp 제약 적용: 제어점 틀기
+    control_points = _apply_constraint_offset(control_points, constraints or [])
     
     # 4. ✅ Bézier curve 생성 (더 조밀하게)
     num_bezier_points = max(15, int(cumulative_dist / 0.03))  # 3cm 간격
