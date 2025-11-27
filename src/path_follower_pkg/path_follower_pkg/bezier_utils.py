@@ -39,6 +39,7 @@ def _apply_constraint_offset(
     clearance=0.12,
     exclusion_radius=0.6,
     max_iterations=4,
+    ph_offset_gain=0.4,
 ):
     """
     제약(cp)이 Bézier 구간을 덮을 때만 중간 제어점(P1, P2)만 경로 밖으로 밀어낸다.
@@ -116,11 +117,16 @@ def _apply_constraint_offset(
             )
             along = np.clip(proj / (path_norm + 1e-6), 0.0, 1.0)
 
+            # 곡선을 밀어내는 기본 방향(offset_dir) 외에, 장애물 쪽에 따라
+            # 경로 진행방향으로 살짝 미는 "ph offset"을 더해 우회폭을 키운다.
+            side = math.copysign(1.0, np.dot(normal, cp - nearest_pt) or 1.0)
+            ph_push = path_dir * side * ph_offset_gain * exclusion_push
+
             # cp4(P3)에 닿기 전까지 지속적으로 밀어내기 위해 최소 힘을 유지
             base_p1 = max(0.6, 1.1 - along)
             base_p2 = max(0.6, 0.6 + along)
-            offset_p1 += offset_dir * exclusion_push * base_p1
-            offset_p2 += offset_dir * exclusion_push * base_p2
+            offset_p1 += offset_dir * exclusion_push * base_p1 + ph_push
+            offset_p2 += offset_dir * exclusion_push * base_p2 + ph_push
 
         accum_p1 += offset_p1
         accum_p2 += offset_p2
