@@ -267,6 +267,11 @@ class PathFollower(Node):
         global_constraints = self.costmap_filter.build_constraints_for_path(
             global_path, logger=self.get_logger()
         )
+        if not constraints and not global_constraints:
+            # 코스트맵이 경로와 겹치지 않으면 기존 글로벌 경로/제약을 그대로 유지한다.
+            # 실시간 코스트맵 갱신으로 곡선이 불필요하게 흔들리는 것을 방지.
+            self.pending_costmap_update = False
+            return
         self.costmap_constraints = constraints
         self.costmap_constraints_global = global_constraints
         self.costmap_obstacles = self.costmap_filter.build_obstacle_circles()
