@@ -30,6 +30,8 @@ class PathManager:
         self.velocities = []
         self.global_curvatures = []
         self.constraint_points = []
+        self.global_constraints = []
+        self.global_constraint_window = 0.8
         
         self.ackermann_planner = AckermannPathPlanner()
         self.interpolation_method = 'spline'
@@ -141,7 +143,12 @@ class PathManager:
             elif self.interpolation_method == 'local_bezier':
                 waypoints_np = np.array(waypoints_to_use)
                 if BEZIER_AVAILABLE:
-                    smooth_points = generate_bezier_from_waypoints(waypoints_np, ds=ds)
+                    smooth_points = generate_bezier_from_waypoints(
+                        waypoints_np,
+                        ds=ds,
+                        constraints=self.global_constraints,
+                        constraint_window=self.global_constraint_window,
+                    )
                     if smooth_points is None:
                         self.node.get_logger().warn(
                             "⚠️ local_bezier: 제어점이 부족해 spline으로 대체합니다."
@@ -284,6 +291,11 @@ class PathManager:
     def update_constraint_points(self, constraint_points):
         self.constraint_points = constraint_points
 
+    def update_global_constraints(self, constraint_points, window: float | None = None):
+        self.global_constraints = constraint_points or []
+        if window is not None:
+            self.global_constraint_window = float(window)
+
     def nearest_constraint_distance(self, robot_pos):
         if not self.constraint_points:
             return None
@@ -310,3 +322,4 @@ class PathManager:
         self.velocities.clear()
         self.global_curvatures.clear()
         self.constraint_points.clear()
+        self.global_constraints.clear()

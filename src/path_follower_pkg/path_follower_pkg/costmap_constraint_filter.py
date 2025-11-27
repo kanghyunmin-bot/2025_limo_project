@@ -67,6 +67,25 @@ class CostmapConstraintFilter:
         scale = (norm + self.inflate_margin) / norm
         return nearest + offset * scale
 
+    def _path_points(self, path: Sequence, limit_radius: float | None = None, center: np.ndarray | None = None) -> np.ndarray:
+        if path is None:
+            return np.empty((0, 2))
+
+        pts: List[np.ndarray] = []
+        radius_sq = None if limit_radius is None else limit_radius * limit_radius
+
+        for pose in path:
+            px = pose.pose.position.x
+            py = pose.pose.position.y
+
+            if radius_sq is not None and center is not None:
+                if (px - center[0]) ** 2 + (py - center[1]) ** 2 > radius_sq:
+                    continue
+
+            pts.append(np.array([px, py], dtype=float))
+
+        return np.vstack(pts) if pts else np.empty((0, 2))
+
     def build_constraints(self, global_path, robot_xy: np.ndarray, logger=None) -> List[np.ndarray]:
         if self._grid is None or global_path is None or len(global_path.poses) == 0:
             return []
@@ -94,7 +113,7 @@ class CostmapConstraintFilter:
             return []
         world_pts = world_pts[keep_robot]
 
-        path_pts = self._path_points_near_robot(global_path.poses, robot_xy, self.search_radius + self.path_window)
+        path_pts = self._path_points(global_path.poses, limit_radius=self.search_radius + self.path_window, center=robot_xy)
         if path_pts.size == 0:
             return []
 
@@ -116,6 +135,61 @@ class CostmapConstraintFilter:
             nearest = path_pts[int(idx)]
             inflated = self._inflate_toward_path(pt, nearest)
             # If the raw point is already outside the window, skip (extra guard)
+            if d > self.path_window:
+                continue
+            constraints.append(inflated)
+            if len(constraints) >= self.max_constraints:
+                break
+
+        return constraints
+
+    def build_constraints_for_path(self, global_path, logger=None) -> List[np.ndarray]:
+        """Extract constraint points along the whole global path (Nav2-style global planner output).
+
+        This is used for global Bézier fitting so that right-angled grid paths are
+        slightly bent away from high-cost cells before local avoidance is applied.
+        """
+
+        if self._grid is None or global_path is None or len(global_path.poses) == 0:
+            return []
+
+        path_frame = global_path.header.frame_id
+        if self._frame_id and path_frame and self._frame_id != path_frame and logger:
+            logger.warn(
+                f"⚠️ Costmap frame '{self._frame_id}' != path frame '{path_frame}'. Assuming same frame for constraints."
+            )
+
+        mask = self._grid >= self.cost_threshold
+        mask = mask[:: self.stride, :: self.stride]
+        if not np.any(mask):
+            return []
+
+        ys, xs = np.nonzero(mask)
+        xs = xs * self.stride
+        ys = ys * self.stride
+        world_pts = self._world_from_index(xs, ys)
+
+        path_pts = self._path_points(global_path.poses)
+        if path_pts.size == 0:
+            return []
+
+        diffs = world_pts[:, None, :] - path_pts[None, :, :]
+        dist_sq = np.sum(diffs ** 2, axis=2)
+        nearest_idx = np.argmin(dist_sq, axis=1)
+        min_dist = np.sqrt(dist_sq[np.arange(dist_sq.shape[0]), nearest_idx])
+
+        keep_path = min_dist <= self.path_window
+        if not np.any(keep_path):
+            return []
+
+        world_pts = world_pts[keep_path]
+        nearest_idx = nearest_idx[keep_path]
+        min_dist = min_dist[keep_path]
+
+        constraints: List[np.ndarray] = []
+        for pt, idx, d in zip(world_pts, nearest_idx, min_dist):
+            nearest = path_pts[int(idx)]
+            inflated = self._inflate_toward_path(pt, nearest)
             if d > self.path_window:
                 continue
             constraints.append(inflated)

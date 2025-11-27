@@ -210,27 +210,69 @@ def split_global_to_local_bezier(global_path, robot_pos, lookahead_dist=0.5, con
     return bezier_points
 
 
-def generate_bezier_from_waypoints(waypoints, num_points_per_segment=50, ds=None):
-    """Waypoint들을 연결하는 연속적인 Bézier curves 생성
+def generate_bezier_from_waypoints(
+    waypoints,
+    num_points_per_segment=50,
+    ds=None,
+    constraints=None,
+    constraint_window: float = 0.9,
+    tension: float = 0.28,
+):
+    """Waypoint 기반 글로벌 Bézier 체인 생성.
 
-    ds를 주면 구간 길이에 비례해 점을 촘촘히 찍어 spline 모드와 비슷한 해상도를 유지합니다.
+    - 인접 방향을 이용해 직각 경로를 자동으로 둥글게 만들고,
+      Nav2 코스트맵/제약점이 근접한 세그먼트는 중간 제어점만 밀어낸다.
+    - ds를 주면 구간 길이에 비례해 점을 촘촘히 찍어 spline과 유사한 밀도를 유지.
     """
     if len(waypoints) < 2:
         return None
 
-    all_curves = []
+    wp = np.array(waypoints, dtype=float)
+    n = len(wp)
+    tangents = []
+    for i in range(n):
+        if i == 0:
+            tvec = wp[i + 1] - wp[i]
+        elif i == n - 1:
+            tvec = wp[i] - wp[i - 1]
+        else:
+            tvec = wp[i + 1] - wp[i - 1]
+        norm = np.linalg.norm(tvec)
+        tangents.append(tvec / norm if norm > 1e-6 else np.zeros(2))
+    tangents = np.array(tangents)
 
-    for i in range(len(waypoints) - 1):
-        P0 = np.array(waypoints[i])
-        P3 = np.array(waypoints[i + 1])
+    all_curves = []
+    constraint_arr = [np.array(c) for c in (constraints or [])]
+
+    for i in range(n - 1):
+        P0 = wp[i]
+        P3 = wp[i + 1]
 
         direction = P3 - P0
         seg_len = float(np.linalg.norm(direction))
         if seg_len < 1e-6:
             continue
 
-        P1 = P0 + direction / 3
-        P2 = P0 + 2 * direction / 3
+        # 코너를 둥글게 만들도록 양끝 접선 방향을 활용
+        t0 = tangents[i]
+        t1 = tangents[i + 1]
+        P1 = P0 + t0 * tension * seg_len
+        P2 = P3 - t1 * tension * seg_len
+
+        # 세그먼트 주변 코스트맵 제약을 중간 제어점에만 반영
+        if constraint_arr:
+            seg_constraints = []
+            for cp in constraint_arr:
+                dist, _ = _distance_point_to_segment(cp, P0, P3)
+                if dist <= constraint_window:
+                    seg_constraints.append(cp)
+            if seg_constraints:
+                cp_adjusted = _apply_constraint_offset(
+                    np.array([P0, P1, P2, P3], dtype=float),
+                    seg_constraints,
+                    exclusion_radius=max(constraint_window, 0.6),
+                )
+                P1, P2 = cp_adjusted[1], cp_adjusted[2]
 
         if ds is not None and ds > 0:
             num_points = max(int(seg_len / ds), 2)

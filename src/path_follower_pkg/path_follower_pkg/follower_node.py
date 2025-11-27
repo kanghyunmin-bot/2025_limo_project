@@ -84,6 +84,7 @@ class PathFollower(Node):
         self.interpolation_method = 'spline'
         self.lidar_constraints = []
         self.costmap_constraints = []
+        self.costmap_constraints_global = []
         
         # ✅ 주기 관리용 타이머
         self.last_local_update_time = time.time()
@@ -202,8 +203,16 @@ class PathFollower(Node):
         constraints = self.costmap_filter.build_constraints(
             global_path, self.robot_pose[:2], logger=self.get_logger()
         )
+        global_constraints = self.costmap_filter.build_constraints_for_path(
+            global_path, logger=self.get_logger()
+        )
         self.costmap_constraints = constraints
+        self.costmap_constraints_global = global_constraints
         self._update_combined_constraints()
+        self.path_manager.update_global_constraints(
+            self.costmap_constraints_global,
+            window=float(self.get_parameter('global_costmap_path_window').value),
+        )
     
     def on_path_source(self, msg: String):
         if msg.data in ['clicked_point', 'planner_path']:
