@@ -101,6 +101,7 @@ rviz2 -d rviz_config/path_follower.rviz
    - Nav2 글로벌 코스트맵(`/global_costmap/costmap`, `OccupancyGrid`)을 같이 쓰면, 코스트맵 상 고비용 셀을 **로봇 주변(≈3m)·경로 인근(≈0.8m)** 에서 제약점으로 자동 추출해 Bézier를 밀어냅니다. 필요 시 토픽과 임계값을 `global_costmap_topic`, `global_cost_threshold` 등 파라미터로 조정하세요.
    - Nav2 코스트맵 셀을 **로봇 반경 + 여유(기본 0.20m + 0.05m)** 만큼 부풀린 원으로 바꿔 글로벌 Bézier 체인이 겹치는지 검사하고, 겹치면 중간 제어점(P1/P2)만 반복적으로 밀어냅니다. 부풀림 크기는 `global_costmap_robot_radius`, `global_costmap_safety_margin`, `global_costmap_inflate_margin` 파라미터로 맞출 수 있습니다.
    - 코스트맵이 빠르게 들어올 때 경로 재계산이 지연되지 않도록, 경로 생성에 쓰는 코스트 셀·경로 점을 부분 샘플링(`global_costmap_path_stride`)하고 재계산 주기를 스로틀(`global_costmap_replan_interval`, 기본 0.8초)합니다.
+   - 경로 생성이 느리다면 `global_bezier_sparse:=true`(기본)로 두어 **모서리나 제약이 있는 세그먼트만 Bézier**로 굽히고, 직선 구간은 선형으로 빠르게 채웁니다. 더 공격적으로 굽히고 싶으면 `global_bezier_corner_deg`(기본 25°)을 낮추면 됩니다.
    - 글로벌 경로 자체도 코스트맵을 기준으로 **직각 모서리를 둥글게** 피팅합니다. Nav2의 Dijkstra/Theta* 결과를 받아 Bézier 체인으로 매끈하게 만들고, 고비용 셀과 겹치는 세그먼트는 중간 제어점만 밀어내 복도/모서리에서 부드럽게 돌아갑니다.
 
 2. **로컬 Bézier 모드 켜기**

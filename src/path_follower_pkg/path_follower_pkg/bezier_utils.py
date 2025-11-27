@@ -371,6 +371,8 @@ def generate_bezier_from_waypoints(
     constraints=None,
     constraint_window: float = 0.9,
     tension: float = 0.28,
+    sparse_only: bool = True,
+    corner_angle_threshold: float = math.radians(25.0),
     obstacles=None,
 ):
     """Waypoint 기반 글로벌 Bézier 체인 생성.
@@ -412,28 +414,57 @@ def generate_bezier_from_waypoints(
         if seg_len < 1e-6:
             continue
 
-        # 코너를 둥글게 만들도록 양끝 접선 방향을 활용
         t0 = tangents[i]
         t1 = tangents[i + 1]
+
+        needs_corner_rounding = False
+        if sparse_only:
+            dot = float(np.clip(np.dot(t0, t1), -1.0, 1.0))
+            turn_angle = math.acos(dot) if not math.isclose(dot, 1.0, abs_tol=1e-6) else 0.0
+            needs_corner_rounding = turn_angle > corner_angle_threshold
+        else:
+            needs_corner_rounding = True
+
+        has_constraints = False
+        seg_constraints = []
+        if constraint_arr:
+            # 제약점을 구간 AABB로 먼저 거르고 필요할 때만 거리 계산
+            seg_min = np.minimum(P0, P3) - constraint_window
+            seg_max = np.maximum(P0, P3) + constraint_window
+            for cp in constraint_arr:
+                if not (seg_min[0] <= cp[0] <= seg_max[0] and seg_min[1] <= cp[1] <= seg_max[1]):
+                    continue
+                dist, _ = _distance_point_to_segment(cp, P0, P3)
+                if dist <= constraint_window:
+                    seg_constraints.append(cp)
+            has_constraints = len(seg_constraints) > 0
+
+        needs_bezier = (not sparse_only) or needs_corner_rounding or has_constraints
+
+        if not needs_bezier:
+            # 거의 직선이고 제약이 없으면 선형으로 추가 (빠른 경로 생성용)
+            if ds is not None and ds > 0:
+                num_points = max(int(seg_len / ds), 2)
+            else:
+                num_points = max(num_points_per_segment // 4, 2)
+            line = np.linspace(P0, P3, num_points)
+            if all_curves:
+                line = line[1:]  # 이전 구간 끝점 중복 제거
+            all_curves.append(line)
+            continue
+
         P1 = P0 + t0 * tension * seg_len
         P2 = P3 - t1 * tension * seg_len
 
         control_points = np.array([P0, P1, P2, P3], dtype=float)
 
-        # 세그먼트 주변 코스트맵 제약을 중간 제어점에만 반영
-        if constraint_arr:
-            seg_constraints = []
-            for cp in constraint_arr:
-                dist, _ = _distance_point_to_segment(cp, P0, P3)
-                if dist <= constraint_window:
-                    seg_constraints.append(cp)
-            if seg_constraints:
-                cp_adjusted = _apply_constraint_offset(
-                    control_points.copy(),
-                    seg_constraints,
-                    exclusion_radius=max(constraint_window, 0.6),
-                )
-                control_points[1], control_points[2] = cp_adjusted[1], cp_adjusted[2]
+        if has_constraints:
+            cp_adjusted = _apply_constraint_offset(
+                control_points.copy(),
+                seg_constraints,
+                exclusion_radius=max(constraint_window, 0.6),
+            )
+            control_points[1], control_points[2] = cp_adjusted[1], cp_adjusted[2]
 
         if obstacle_arr:
             safe_cp = _push_away_from_obstacles(control_points, obstacle_arr)
@@ -445,6 +476,8 @@ def generate_bezier_from_waypoints(
             num_points = num_points_per_segment
 
         curve = bezier_curve(control_points, num_points)
+        if all_curves:
+            curve = curve[1:]  # 끝점 중복 제거
 
         all_curves.append(curve)
 

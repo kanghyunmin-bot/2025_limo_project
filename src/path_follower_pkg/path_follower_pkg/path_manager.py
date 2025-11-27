@@ -33,6 +33,8 @@ class PathManager:
         self.global_constraints = []
         self.global_constraint_window = 0.8
         self.global_obstacles = []
+        self.bezier_sparse_mode = True
+        self.bezier_corner_angle = math.radians(25.0)
         
         self.ackermann_planner = AckermannPathPlanner()
         self.interpolation_method = 'spline'
@@ -149,6 +151,8 @@ class PathManager:
                         ds=ds,
                         constraints=self.global_constraints,
                         constraint_window=self.global_constraint_window,
+                        sparse_only=self.bezier_sparse_mode,
+                        corner_angle_threshold=self.bezier_corner_angle,
                         obstacles=self.global_obstacles,
                     )
                     if smooth_points is None:

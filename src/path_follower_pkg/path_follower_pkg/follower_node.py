@@ -43,6 +43,8 @@ class PathFollower(Node):
         self.declare_parameter('global_costmap_max_constraints', 60)
         self.declare_parameter('global_costmap_path_stride', 3)
         self.declare_parameter('global_costmap_replan_interval', 0.8)
+        self.declare_parameter('global_bezier_sparse', True)
+        self.declare_parameter('global_bezier_corner_deg', 25.0)
         
         # ✅ 주기 설정
         self.declare_parameter('controller_frequency', 60.0)  # 제어 주기
@@ -62,6 +64,8 @@ class PathFollower(Node):
         self.enable_dynamic_avoidance = self.get_parameter('enable_dynamic_avoidance').value
         self.global_costmap_topic = self.get_parameter('global_costmap_topic').value
         self.costmap_replan_interval = float(self.get_parameter('global_costmap_replan_interval').value)
+        self.global_bezier_sparse = bool(self.get_parameter('global_bezier_sparse').value)
+        self.global_bezier_corner_deg = float(self.get_parameter('global_bezier_corner_deg').value)
 
         # Components
         self.path_manager = PathManager(self)
@@ -114,6 +118,10 @@ class PathFollower(Node):
             f"   Local Planner: {self.local_planner_freq}Hz\n"
             f"   Global Publish: {self.global_publish_freq}Hz"
         )
+
+        # 전역 Bézier를 꼭 필요한 모서리/제약 구간에만 적용해 경로 생성 시간을 단축
+        self.path_manager.bezier_sparse_mode = self.global_bezier_sparse
+        self.path_manager.bezier_corner_angle = math.radians(self.global_bezier_corner_deg)
     
     def _setup_publishers(self):
         self.pub_cmd_vel = self.create_publisher(Twist, '/cmd_vel', 10)
