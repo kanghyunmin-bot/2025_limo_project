@@ -2,7 +2,8 @@
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist, PointStamped, PoseWithCovarianceStamped
-from nav_msgs.msg import Path, Odometry
+from nav_msgs.msg import Path, Odometry, OccupancyGrid
+from sensor_msgs.msg import PointCloud2, LaserScan
 from std_msgs.msg import Empty, String, Float32
 import math
 import numpy as np
@@ -14,6 +15,8 @@ from .stanley_controller import StanleyController
 from .math_utils import quaternion_to_yaw
 from .path_recorder import PathRecorder
 from .accuracy_utils import AccuracyCalculator
+from .lidar_constraint_filter import LidarConstraintFilter
+from .costmap_constraint_filter import CostmapConstraintFilter
 
 
 class PathFollower(Node):
@@ -25,6 +28,21 @@ class PathFollower(Node):
         self.declare_parameter('drive_mode', 'differential')
         self.declare_parameter('wheelbase', 0.4)
         self.declare_parameter('arrival_threshold', 0.15)
+
+        self.declare_parameter('lidar_topic', '/scan')
+        self.declare_parameter('lidar_message_type', 'scan')  # 'scan' or 'pointcloud'
+        self.declare_parameter('enable_dynamic_avoidance', True)
+        self.declare_parameter('global_costmap_topic', '/global_costmap/costmap')
+        self.declare_parameter('global_cost_threshold', 50)
+        self.declare_parameter('global_costmap_search_radius', 3.0)
+        self.declare_parameter('global_costmap_path_window', 0.8)
+        self.declare_parameter('global_costmap_inflate_margin', 0.35)
+        self.declare_parameter('global_costmap_robot_radius', 0.20)
+        self.declare_parameter('global_costmap_safety_margin', 0.05)
+        self.declare_parameter('global_costmap_stride', 2)
+        self.declare_parameter('global_costmap_max_constraints', 60)
+        self.declare_parameter('global_costmap_path_stride', 3)
+        self.declare_parameter('global_costmap_replan_interval', 0.8)
         
         # ✅ 주기 설정
         self.declare_parameter('controller_frequency', 60.0)  # 제어 주기
@@ -39,7 +57,12 @@ class PathFollower(Node):
         self.controller_freq = self.get_parameter('controller_frequency').value
         self.local_planner_freq = self.get_parameter('local_planner_frequency').value
         self.global_publish_freq = self.get_parameter('global_publish_frequency').value
-        
+        self.lidar_topic = self.get_parameter('lidar_topic').value
+        self.lidar_message_type = str(self.get_parameter('lidar_message_type').value).lower()
+        self.enable_dynamic_avoidance = self.get_parameter('enable_dynamic_avoidance').value
+        self.global_costmap_topic = self.get_parameter('global_costmap_topic').value
+        self.costmap_replan_interval = float(self.get_parameter('global_costmap_replan_interval').value)
+
         # Components
         self.path_manager = PathManager(self)
         self.controllers = {
@@ -49,16 +72,34 @@ class PathFollower(Node):
         
         self.path_recorder = PathRecorder(record_interval=0.1)
         self.accuracy_calculator = AccuracyCalculator()
+        self.constraint_filter = LidarConstraintFilter()
+        self.costmap_filter = CostmapConstraintFilter(
+            cost_threshold=int(self.get_parameter('global_cost_threshold').value),
+            search_radius=float(self.get_parameter('global_costmap_search_radius').value),
+            path_window=float(self.get_parameter('global_costmap_path_window').value),
+            inflate_margin=float(self.get_parameter('global_costmap_inflate_margin').value),
+            robot_radius=float(self.get_parameter('global_costmap_robot_radius').value),
+            safety_margin=float(self.get_parameter('global_costmap_safety_margin').value),
+            stride=int(self.get_parameter('global_costmap_stride').value),
+            max_constraints=int(self.get_parameter('global_costmap_max_constraints').value),
+            path_stride=int(self.get_parameter('global_costmap_path_stride').value),
+        )
         
         # State
         self.robot_pose = np.array([0.0, 0.0, 0.0])
         self.is_running = False
         self.path_source = 'clicked_point'
         self.interpolation_method = 'spline'
+        self.lidar_constraints = []
+        self.costmap_constraints = []
+        self.costmap_constraints_global = []
+        self.costmap_obstacles = []
         
         # ✅ 주기 관리용 타이머
         self.last_local_update_time = time.time()
         self.last_global_publish_time = time.time()
+        self.last_costmap_replan_time = 0.0
+        self.pending_costmap_update = False
         
         self._setup_publishers()
         self._setup_subscribers()
@@ -86,6 +127,20 @@ class PathFollower(Node):
         self.sub_clicked_point = self.create_subscription(PointStamped, '/clicked_point', self.on_clicked_point, 10)
         self.sub_planner_path = self.create_subscription(Path, '/planner/path', self.on_planner_path, 10)
         self.sub_init_pose = self.create_subscription(PoseWithCovarianceStamped, '/initialpose', self.on_init_pose, 10)
+
+        if self.enable_dynamic_avoidance:
+            if self.lidar_message_type == 'pointcloud':
+                self.sub_lidar = self.create_subscription(PointCloud2, self.lidar_topic, self.on_pointcloud, 10)
+            elif self.lidar_message_type == 'scan':
+                self.sub_lidar = self.create_subscription(LaserScan, self.lidar_topic, self.on_scan, 10)
+            else:
+                self.get_logger().warn(
+                    f"Unknown lidar_message_type '{self.lidar_message_type}', defaulting to LaserScan"
+                )
+                self.sub_lidar = self.create_subscription(LaserScan, self.lidar_topic, self.on_scan, 10)
+            self.sub_costmap = self.create_subscription(
+                OccupancyGrid, self.global_costmap_topic, self.on_costmap, 2
+            )
         
         self.sub_start = self.create_subscription(Empty, '/path_follower/start', self.on_start, 10)
         self.sub_stop = self.create_subscription(Empty, '/path_follower/stop', self.on_stop, 10)
@@ -121,6 +176,42 @@ class PathFollower(Node):
         self.robot_pose[0] = msg.pose.pose.position.x
         self.robot_pose[1] = msg.pose.pose.position.y
         self.robot_pose[2] = quaternion_to_yaw(msg.pose.pose.orientation)
+
+    def on_pointcloud(self, msg: PointCloud2):
+        if not self.enable_dynamic_avoidance:
+            return
+
+        constraint_points_base = self.constraint_filter.build_constraints(msg)
+        if not constraint_points_base:
+            self.lidar_constraints = []
+            self._update_combined_constraints()
+            return
+
+        constraint_points_odom = self._transform_constraints_to_odom(constraint_points_base)
+        self.lidar_constraints = constraint_points_odom
+        self._update_combined_constraints()
+
+    def on_scan(self, msg: LaserScan):
+        if not self.enable_dynamic_avoidance:
+            return
+
+        constraint_points_base = self.constraint_filter.build_constraints(msg)
+        if not constraint_points_base:
+            self.lidar_constraints = []
+            self._update_combined_constraints()
+            return
+
+        constraint_points_odom = self._transform_constraints_to_odom(constraint_points_base)
+        self.lidar_constraints = constraint_points_odom
+        self._update_combined_constraints()
+
+    def on_costmap(self, msg: OccupancyGrid):
+        if not self.enable_dynamic_avoidance:
+            return
+
+        self.costmap_filter.update_costmap(msg)
+        self.pending_costmap_update = True
+        self._maybe_refresh_costmap_constraints()
     
     def on_path_source(self, msg: String):
         if msg.data in ['clicked_point', 'planner_path']:
@@ -144,6 +235,57 @@ class PathFollower(Node):
     def on_velocity_params(self, msg: Twist):
         self.path_manager.v_max = msg.linear.x
         self.path_manager.v_min = msg.linear.y
+
+    def _transform_constraints_to_odom(self, constraint_points_base):
+        yaw = self.robot_pose[2]
+        c, s = math.cos(yaw), math.sin(yaw)
+        rot = np.array([[c, -s], [s, c]])
+        translation = self.robot_pose[:2]
+
+        return [translation + rot.dot(pt) for pt in constraint_points_base]
+
+    def _update_combined_constraints(self):
+        combined = list(self.costmap_constraints)
+        combined.extend(self.lidar_constraints)
+        self.path_manager.update_constraint_points(combined)
+
+    def _maybe_refresh_costmap_constraints(self):
+        if not self.pending_costmap_update:
+            return
+
+        now = time.time()
+        if now - self.last_costmap_replan_time < self.costmap_replan_interval:
+            return
+
+        global_path = self.path_manager.get_global_path()
+        if global_path is None or len(global_path.poses) == 0:
+            return
+
+        constraints = self.costmap_filter.build_constraints(
+            global_path, self.robot_pose[:2], logger=self.get_logger()
+        )
+        global_constraints = self.costmap_filter.build_constraints_for_path(
+            global_path, logger=self.get_logger()
+        )
+        self.costmap_constraints = constraints
+        self.costmap_constraints_global = global_constraints
+        self.costmap_obstacles = self.costmap_filter.build_obstacle_circles()
+        self.path_manager.global_obstacle_window = float(
+            self.get_parameter('global_costmap_path_window').value
+        ) + float(self.get_parameter('global_costmap_inflate_margin').value)
+        self.path_manager.global_obstacle_cap = int(
+            self.get_parameter('global_costmap_max_constraints').value
+        )
+        self._update_combined_constraints()
+        self.path_manager.update_global_constraints(
+            self.costmap_constraints_global,
+            window=float(self.get_parameter('global_costmap_path_window').value),
+            replan=True,
+        )
+        self.path_manager.update_global_obstacles(self.costmap_obstacles, replan=True)
+
+        self.last_costmap_replan_time = now
+        self.pending_costmap_update = False
     
     def on_start(self, msg: Empty):
         if self.path_manager.get_local_path() is None:
@@ -182,6 +324,9 @@ class PathFollower(Node):
         if current_time - self.last_local_update_time >= local_period:
             self.path_manager.update_local_path_with_cp(self.robot_pose[:2])
             self.last_local_update_time = current_time
+
+        # ✅ 1-1. Costmap 기반 제약 재계산(스로틀)
+        self._maybe_refresh_costmap_constraints()
         
         # ✅ 2. Global Path Publish (1Hz)
         global_period = 1.0 / self.global_publish_freq
@@ -221,8 +366,16 @@ class PathFollower(Node):
     def _execute_control(self, local_path):
         path_points = local_path.poses
         controller = self.controllers[self.control_mode]
-        
+
         velocity_ref = self.path_manager.v_max
+
+        # ✅ 장애물 근접 시 속도 완화 (경로 틀기로도 못피할 때 급정지 방지)
+        nearest_cp = self.path_manager.nearest_constraint_distance(self.robot_pose[:2])
+        if nearest_cp is not None:
+            if nearest_cp < 0.25:
+                velocity_ref = 0.0
+            elif nearest_cp < 0.5:
+                velocity_ref = max(self.path_manager.v_min, velocity_ref * 0.35)
         
         try:
             linear_v, angular_z, steering_angle = controller.compute_control(
