@@ -41,6 +41,9 @@ class CostmapConstraintFilter:
         self._origin = np.zeros(2)
         self._frame_id: Optional[str] = None
 
+        # 내부 최적화용 청크 크기 (거리 계산 시 메모리/시간 절약)
+        self._chunk = 256
+
     def build_obstacle_circles(self) -> List[Tuple[np.ndarray, float]]:
         """Convert occupied cells into inflated circular obstacles for Bézier collision checks.
 
@@ -93,6 +96,31 @@ class CostmapConstraintFilter:
             return nearest
         scale = (norm + self.inflate_margin) / norm
         return nearest + offset * scale
+
+    def _nearest_indices_and_dist(self, world_pts: np.ndarray, path_pts: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """최소 거리/인덱스를 메모리 폭주 없이 계산."""
+
+        if world_pts.size == 0 or path_pts.size == 0:
+            return np.array([], dtype=int), np.array([])
+
+        min_dist_sq = np.full(world_pts.shape[0], np.inf, dtype=float)
+        min_idx = np.zeros(world_pts.shape[0], dtype=int)
+
+        # 경로 점을 청크 단위로 나눠 거리 계산
+        for start in range(0, path_pts.shape[0], self._chunk):
+            end = start + self._chunk
+            path_chunk = path_pts[start:end]
+            diffs = world_pts[:, None, :] - path_chunk[None, :, :]
+            dist_sq = np.sum(diffs ** 2, axis=2)
+
+            local_min_idx = np.argmin(dist_sq, axis=1)
+            local_min = dist_sq[np.arange(dist_sq.shape[0]), local_min_idx]
+
+            better = local_min < min_dist_sq
+            min_dist_sq[better] = local_min[better]
+            min_idx[better] = local_min_idx[better] + start
+
+        return min_idx, np.sqrt(min_dist_sq)
 
     def _path_points(self, path: Sequence, limit_radius: float | None = None, center: np.ndarray | None = None) -> np.ndarray:
         if path is None:
@@ -148,10 +176,7 @@ class CostmapConstraintFilter:
         if path_pts.size == 0:
             return []
 
-        diffs = world_pts[:, None, :] - path_pts[None, :, :]
-        dist_sq = np.sum(diffs ** 2, axis=2)
-        nearest_idx = np.argmin(dist_sq, axis=1)
-        min_dist = np.sqrt(dist_sq[np.arange(dist_sq.shape[0]), nearest_idx])
+        nearest_idx, min_dist = self._nearest_indices_and_dist(world_pts, path_pts)
 
         keep_path = min_dist <= self.path_window
         if not np.any(keep_path):
@@ -204,10 +229,21 @@ class CostmapConstraintFilter:
         if path_pts.size == 0:
             return []
 
-        diffs = world_pts[:, None, :] - path_pts[None, :, :]
-        dist_sq = np.sum(diffs ** 2, axis=2)
-        nearest_idx = np.argmin(dist_sq, axis=1)
-        min_dist = np.sqrt(dist_sq[np.arange(dist_sq.shape[0]), nearest_idx])
+        # 경로 주변만 남기기 위해 AABB + 여유를 적용해 포인트 수를 줄인다.
+        pad = self.path_window + 0.2
+        min_xy = np.min(path_pts, axis=0) - pad
+        max_xy = np.max(path_pts, axis=0) + pad
+        within = (
+            (world_pts[:, 0] >= min_xy[0])
+            & (world_pts[:, 0] <= max_xy[0])
+            & (world_pts[:, 1] >= min_xy[1])
+            & (world_pts[:, 1] <= max_xy[1])
+        )
+        if not np.any(within):
+            return []
+        world_pts = world_pts[within]
+
+        nearest_idx, min_dist = self._nearest_indices_and_dist(world_pts, path_pts)
 
         keep_path = min_dist <= self.path_window
         if not np.any(keep_path):
