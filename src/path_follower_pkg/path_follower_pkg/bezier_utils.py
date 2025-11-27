@@ -329,6 +329,26 @@ def _filter_obstacles_for_segment(obstacles, p0, p3, window, cap=None):
     return filtered
 
 
+def _prefilter_obstacles_by_bbox(obstacles, bbox_min, bbox_max, pad: float = 1.0):
+    """간단한 박스 필터로 멀리 있는 장애물을 한번에 제거해 반복 연산 감소."""
+
+    if not obstacles:
+        return []
+
+    x0, y0 = bbox_min
+    x1, y1 = bbox_max
+
+    filt = []
+    for center, radius in obstacles:
+        cx, cy = center
+        if (cx + radius) < (x0 - pad) or (cx - radius) > (x1 + pad):
+            continue
+        if (cy + radius) < (y0 - pad) or (cy - radius) > (y1 + pad):
+            continue
+        filt.append((center, radius))
+    return filt
+
+
 def split_global_to_local_bezier(global_path, robot_pos, lookahead_dist=0.5, constraints=None):
     """
     ✅ 개선된 Local Bézier: shortcut 방지 + 제약점 기반 경로 틀기
@@ -457,6 +477,13 @@ def generate_bezier_from_waypoints(
     for obs in obstacles or []:
         center, radius = obs
         obstacle_arr.append((np.array(center, dtype=float), float(radius)))
+
+    if len(wp) >= 2:
+        bbox_min = np.min(wp, axis=0)
+        bbox_max = np.max(wp, axis=0)
+        pad = max(constraint_window, obstacle_window, 0.6)
+        constraint_obs = _prefilter_obstacles_by_bbox(constraint_obs, bbox_min, bbox_max, pad=pad)
+        obstacle_arr = _prefilter_obstacles_by_bbox(obstacle_arr, bbox_min, bbox_max, pad=pad)
 
     for i in range(n - 1):
         P0 = wp[i]
