@@ -41,6 +41,8 @@ class PathFollower(Node):
         self.declare_parameter('global_costmap_safety_margin', 0.05)
         self.declare_parameter('global_costmap_stride', 2)
         self.declare_parameter('global_costmap_max_constraints', 60)
+        self.declare_parameter('global_costmap_path_stride', 3)
+        self.declare_parameter('global_costmap_replan_interval', 0.8)
         
         # ✅ 주기 설정
         self.declare_parameter('controller_frequency', 60.0)  # 제어 주기
@@ -59,7 +61,8 @@ class PathFollower(Node):
         self.lidar_message_type = str(self.get_parameter('lidar_message_type').value).lower()
         self.enable_dynamic_avoidance = self.get_parameter('enable_dynamic_avoidance').value
         self.global_costmap_topic = self.get_parameter('global_costmap_topic').value
-        
+        self.costmap_replan_interval = float(self.get_parameter('global_costmap_replan_interval').value)
+
         # Components
         self.path_manager = PathManager(self)
         self.controllers = {
@@ -79,6 +82,7 @@ class PathFollower(Node):
             safety_margin=float(self.get_parameter('global_costmap_safety_margin').value),
             stride=int(self.get_parameter('global_costmap_stride').value),
             max_constraints=int(self.get_parameter('global_costmap_max_constraints').value),
+            path_stride=int(self.get_parameter('global_costmap_path_stride').value),
         )
         
         # State
@@ -94,6 +98,8 @@ class PathFollower(Node):
         # ✅ 주기 관리용 타이머
         self.last_local_update_time = time.time()
         self.last_global_publish_time = time.time()
+        self.last_costmap_replan_time = 0.0
+        self.pending_costmap_update = False
         
         self._setup_publishers()
         self._setup_subscribers()
@@ -204,23 +210,8 @@ class PathFollower(Node):
             return
 
         self.costmap_filter.update_costmap(msg)
-        global_path = self.path_manager.get_global_path()
-        constraints = self.costmap_filter.build_constraints(
-            global_path, self.robot_pose[:2], logger=self.get_logger()
-        )
-        global_constraints = self.costmap_filter.build_constraints_for_path(
-            global_path, logger=self.get_logger()
-        )
-        self.costmap_constraints = constraints
-        self.costmap_constraints_global = global_constraints
-        self.costmap_obstacles = self.costmap_filter.build_obstacle_circles()
-        self._update_combined_constraints()
-        self.path_manager.update_global_constraints(
-            self.costmap_constraints_global,
-            window=float(self.get_parameter('global_costmap_path_window').value),
-            replan=True,
-        )
-        self.path_manager.update_global_obstacles(self.costmap_obstacles, replan=True)
+        self.pending_costmap_update = True
+        self._maybe_refresh_costmap_constraints()
     
     def on_path_source(self, msg: String):
         if msg.data in ['clicked_point', 'planner_path']:
@@ -257,6 +248,38 @@ class PathFollower(Node):
         combined = list(self.costmap_constraints)
         combined.extend(self.lidar_constraints)
         self.path_manager.update_constraint_points(combined)
+
+    def _maybe_refresh_costmap_constraints(self):
+        if not self.pending_costmap_update:
+            return
+
+        now = time.time()
+        if now - self.last_costmap_replan_time < self.costmap_replan_interval:
+            return
+
+        global_path = self.path_manager.get_global_path()
+        if global_path is None or len(global_path.poses) == 0:
+            return
+
+        constraints = self.costmap_filter.build_constraints(
+            global_path, self.robot_pose[:2], logger=self.get_logger()
+        )
+        global_constraints = self.costmap_filter.build_constraints_for_path(
+            global_path, logger=self.get_logger()
+        )
+        self.costmap_constraints = constraints
+        self.costmap_constraints_global = global_constraints
+        self.costmap_obstacles = self.costmap_filter.build_obstacle_circles()
+        self._update_combined_constraints()
+        self.path_manager.update_global_constraints(
+            self.costmap_constraints_global,
+            window=float(self.get_parameter('global_costmap_path_window').value),
+            replan=True,
+        )
+        self.path_manager.update_global_obstacles(self.costmap_obstacles, replan=True)
+
+        self.last_costmap_replan_time = now
+        self.pending_costmap_update = False
     
     def on_start(self, msg: Empty):
         if self.path_manager.get_local_path() is None:
@@ -295,6 +318,9 @@ class PathFollower(Node):
         if current_time - self.last_local_update_time >= local_period:
             self.path_manager.update_local_path_with_cp(self.robot_pose[:2])
             self.last_local_update_time = current_time
+
+        # ✅ 1-1. Costmap 기반 제약 재계산(스로틀)
+        self._maybe_refresh_costmap_constraints()
         
         # ✅ 2. Global Path Publish (1Hz)
         global_period = 1.0 / self.global_publish_freq

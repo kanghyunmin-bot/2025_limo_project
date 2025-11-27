@@ -24,6 +24,7 @@ class CostmapConstraintFilter:
         safety_margin: float = 0.05,
         stride: int = 2,
         max_constraints: int = 60,
+        path_stride: int = 3,
     ):
         self.cost_threshold = cost_threshold
         self.search_radius = search_radius
@@ -33,6 +34,7 @@ class CostmapConstraintFilter:
         self.safety_margin = safety_margin
         self.stride = max(1, stride)
         self.max_constraints = max_constraints
+        self.path_stride = max(1, path_stride)
 
         self._grid: Optional[np.ndarray] = None
         self._resolution: float = 0.0
@@ -109,7 +111,11 @@ class CostmapConstraintFilter:
 
             pts.append(np.array([px, py], dtype=float))
 
-        return np.vstack(pts) if pts else np.empty((0, 2))
+        if not pts:
+            return np.empty((0, 2))
+
+        arr = np.vstack(pts)
+        return arr[:: self.path_stride] if self.path_stride > 1 else arr
 
     def build_constraints(self, global_path, robot_xy: np.ndarray, logger=None) -> List[np.ndarray]:
         if self._grid is None or global_path is None or len(global_path.poses) == 0:
