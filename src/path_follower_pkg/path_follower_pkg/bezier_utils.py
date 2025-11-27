@@ -37,7 +37,7 @@ def _apply_constraint_offset(
     avoid_margin=0.45,
     max_offset=1.2,
     clearance=0.12,
-    exclusion_radius=0.6,
+    exclusion_radius=0.8,
     max_iterations=4,
     ph_offset_gain=0.4,
 ):
@@ -102,12 +102,14 @@ def _apply_constraint_offset(
             if proj < -0.1:  # 뒤쪽 장애물은 무시
                 continue
 
-            curve_to_cp = nearest_pt - cp
+            curve_to_cp = cp - nearest_pt
             dist_norm = np.linalg.norm(curve_to_cp)
             if dist_norm < 1e-6:
                 curve_to_cp = normal
                 dist_norm = np.linalg.norm(curve_to_cp)
 
+            # curve_to_cp는 경로→장애물 방향이므로, 해당 방향으로 제어점을 밀어내면
+            # 겹침을 풀 수 있다.
             offset_dir = curve_to_cp / dist_norm
             exclusion_push = np.clip(
                 (exclusion_radius - curve_dist + clearance)
