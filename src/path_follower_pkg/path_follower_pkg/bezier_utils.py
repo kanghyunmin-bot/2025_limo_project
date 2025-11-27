@@ -31,7 +31,15 @@ def _distance_point_to_segment(pt, a, b):
     return np.linalg.norm(pt - proj), proj
 
 
-def _apply_constraint_offset(control_points, constraints, avoid_margin=0.45, max_offset=1.2, clearance=0.12):
+def _apply_constraint_offset(
+    control_points,
+    constraints,
+    avoid_margin=0.45,
+    max_offset=1.2,
+    clearance=0.12,
+    exclusion_radius=0.6,
+    max_iterations=4,
+):
     """
     제약(cp)이 Bézier 구간을 덮을 때만 중간 제어점(P1, P2)만 경로 밖으로 밀어낸다.
 
@@ -54,52 +62,11 @@ def _apply_constraint_offset(control_points, constraints, avoid_margin=0.45, max
     path_dir = path_vec / path_norm
     normal = np.array([-path_dir[1], path_dir[0]])
 
-    # 제약과 충돌하는지 먼저 확인하기 위해 기본 Bézier를 생성
-    base_curve = bezier_curve(control_points, num_points=60)
-
-    def _closest_to_curve(cp):
-        distances = np.linalg.norm(base_curve - cp, axis=1)
-        idx = int(np.argmin(distances))
-        return float(distances[idx]), base_curve[idx]
-
-    overlapping = []
-    for cp in constraints:
-        # 기본 Bézier가 cp 근처(avoid_margin)로 스쳐 지나갈 때만 회피 적용
-        curve_dist, nearest_pt = _closest_to_curve(cp)
-        if curve_dist < avoid_margin:
-            overlapping.append((cp, curve_dist, nearest_pt))
-
-    if not overlapping:
-        return control_points
-
-    offset_p1 = np.zeros(2)
-    offset_p2 = np.zeros(2)
-
-    for cp, curve_dist, nearest_pt in overlapping:
-        ahead_vec = cp - p0
-        proj = np.dot(ahead_vec, path_dir)
-        if proj < -0.1:  # 뒤쪽 장애물은 무시
-            continue
-
-        curve_to_cp = nearest_pt - cp
-        dist_norm = np.linalg.norm(curve_to_cp)
-        if dist_norm < 1e-6:
-            curve_to_cp = normal
-            dist_norm = np.linalg.norm(curve_to_cp)
-
-        offset_dir = curve_to_cp / dist_norm
-        strength = np.clip(
-            (avoid_margin - curve_dist + clearance) / max(avoid_margin, 1e-6),
-            0.0,
-            2.0,
-        )
-        along = np.clip(proj / (path_norm + 1e-6), 0.0, 1.0)
-
-        # 시작/끝 쪽 제어점을 분리해서 밀기 (가까울수록 더 강하게)
-        base_p1 = max(0.35, 1.0 - along)
-        base_p2 = max(0.35, along)
-        offset_p1 += offset_dir * strength * base_p1
-        offset_p2 += offset_dir * strength * base_p2
+    # 중간 제어점 누적 오프셋 (P0, P3 고정)
+    p1_base = p1.copy()
+    p2_base = p2.copy()
+    accum_p1 = np.zeros(2)
+    accum_p2 = np.zeros(2)
 
     def _clip_offset(vec):
         norm = np.linalg.norm(vec)
@@ -107,10 +74,60 @@ def _apply_constraint_offset(control_points, constraints, avoid_margin=0.45, max
             return np.zeros_like(vec)
         return vec / norm * min(norm, max_offset)
 
-    cp_array[1] = p1 + _clip_offset(offset_p1)
-    cp_array[2] = p2 + _clip_offset(offset_p2)
+    def _closest_to_curve(cp, curve):
+        distances = np.linalg.norm(curve - cp, axis=1)
+        idx = int(np.argmin(distances))
+        return float(distances[idx]), curve[idx]
 
-    # P0, P3는 그대로 유지 → 글로벌 경로 복귀 확보
+    # 제약 영역(원형 exclusion)을 만족할 때까지 반복적으로 밀어내기
+    for _ in range(max_iterations):
+        base_curve = bezier_curve(cp_array, num_points=80)
+        overlapping = []
+
+        for cp in constraints:
+            curve_dist, nearest_pt = _closest_to_curve(cp, base_curve)
+            if curve_dist < exclusion_radius:
+                overlapping.append((cp, curve_dist, nearest_pt))
+
+        if not overlapping:
+            break
+
+        offset_p1 = np.zeros(2)
+        offset_p2 = np.zeros(2)
+
+        for cp, curve_dist, nearest_pt in overlapping:
+            ahead_vec = cp - p0
+            proj = np.dot(ahead_vec, path_dir)
+            if proj < -0.1:  # 뒤쪽 장애물은 무시
+                continue
+
+            curve_to_cp = nearest_pt - cp
+            dist_norm = np.linalg.norm(curve_to_cp)
+            if dist_norm < 1e-6:
+                curve_to_cp = normal
+                dist_norm = np.linalg.norm(curve_to_cp)
+
+            offset_dir = curve_to_cp / dist_norm
+            exclusion_push = np.clip(
+                (exclusion_radius - curve_dist + clearance)
+                / max(exclusion_radius, 1e-6),
+                0.0,
+                2.5,
+            )
+            along = np.clip(proj / (path_norm + 1e-6), 0.0, 1.0)
+
+            # cp4(P3)에 닿기 전까지 지속적으로 밀어내기 위해 최소 힘을 유지
+            base_p1 = max(0.6, 1.1 - along)
+            base_p2 = max(0.6, 0.6 + along)
+            offset_p1 += offset_dir * exclusion_push * base_p1
+            offset_p2 += offset_dir * exclusion_push * base_p2
+
+        accum_p1 += offset_p1
+        accum_p2 += offset_p2
+
+        cp_array[1] = p1_base + _clip_offset(accum_p1)
+        cp_array[2] = p2_base + _clip_offset(accum_p2)
+
     return cp_array
 
 
