@@ -31,7 +31,7 @@ def _distance_point_to_segment(pt, a, b):
     return np.linalg.norm(pt - proj), proj
 
 
-def _apply_constraint_offset(control_points, constraints, avoid_margin=0.45, max_offset=0.8):
+def _apply_constraint_offset(control_points, constraints, avoid_margin=0.45, max_offset=1.2, clearance=0.12):
     """
     제약(cp)이 Bézier 구간을 덮을 때만 중간 제어점(P1, P2)만 경로 밖으로 밀어낸다.
 
@@ -55,17 +55,19 @@ def _apply_constraint_offset(control_points, constraints, avoid_margin=0.45, max
     normal = np.array([-path_dir[1], path_dir[0]])
 
     # 제약과 충돌하는지 먼저 확인하기 위해 기본 Bézier를 생성
-    base_curve = bezier_curve(control_points, num_points=40)
+    base_curve = bezier_curve(control_points, num_points=60)
 
     def _closest_to_curve(cp):
-        return float(np.min(np.linalg.norm(base_curve - cp, axis=1)))
+        distances = np.linalg.norm(base_curve - cp, axis=1)
+        idx = int(np.argmin(distances))
+        return float(distances[idx]), base_curve[idx]
 
     overlapping = []
     for cp in constraints:
         # 기본 Bézier가 cp 근처(avoid_margin)로 스쳐 지나갈 때만 회피 적용
-        curve_dist = _closest_to_curve(cp)
+        curve_dist, nearest_pt = _closest_to_curve(cp)
         if curve_dist < avoid_margin:
-            overlapping.append((cp, curve_dist))
+            overlapping.append((cp, curve_dist, nearest_pt))
 
     if not overlapping:
         return control_points
@@ -73,18 +75,21 @@ def _apply_constraint_offset(control_points, constraints, avoid_margin=0.45, max
     offset_p1 = np.zeros(2)
     offset_p2 = np.zeros(2)
 
-    for cp, curve_dist in overlapping:
+    for cp, curve_dist, nearest_pt in overlapping:
         ahead_vec = cp - p0
         proj = np.dot(ahead_vec, path_dir)
         if proj < -0.1:  # 뒤쪽 장애물은 무시
             continue
 
-        side = np.cross(path_dir, cp - p0)
-        side_sign = 1.0 if side >= 0 else -1.0
+        curve_to_cp = nearest_pt - cp
+        dist_norm = np.linalg.norm(curve_to_cp)
+        if dist_norm < 1e-6:
+            curve_to_cp = normal
+            dist_norm = np.linalg.norm(curve_to_cp)
 
-        strength = (avoid_margin - curve_dist) / avoid_margin
+        offset_dir = curve_to_cp / dist_norm
+        strength = (avoid_margin - curve_dist + clearance) / max(avoid_margin, 1e-6)
         along = np.clip(proj / (path_norm + 1e-6), 0.0, 1.0)
-        offset_dir = normal * side_sign * strength
 
         # 시작/끝 쪽 제어점을 분리해서 밀기
         offset_p1 += offset_dir * max(0.25, 1.0 - along)

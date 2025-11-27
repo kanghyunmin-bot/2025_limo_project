@@ -184,10 +184,18 @@ class PathManager:
             return
         
         try:
+            lookahead = 0.5
+            if self.constraint_points:
+                nearest_cp = self.nearest_constraint_distance(robot_pos)
+                if nearest_cp is None:
+                    nearest_cp = 0.6
+                extra = np.clip(0.7 - nearest_cp, 0.0, 0.5)
+                lookahead += extra
+
             local_bezier_points = split_global_to_local_bezier(
                 self.global_path,
                 robot_pos,
-                lookahead_dist=0.5,
+                lookahead_dist=lookahead,
                 constraints=self.constraint_points,
             )
             
