@@ -10,7 +10,7 @@ from .ackermann_path_planner import AckermannPathPlanner
 
 # ✅ 조건부 import
 try:
-    from .bezier_utils import split_global_to_local_bezier
+    from .bezier_utils import generate_bezier_from_waypoints, split_global_to_local_bezier
     BEZIER_AVAILABLE = True
 except ImportError:
     BEZIER_AVAILABLE = False
@@ -29,6 +29,12 @@ class PathManager:
         self.local_path = None
         self.velocities = []
         self.global_curvatures = []
+        self.constraint_points = []
+        self.global_constraints = []
+        self.global_constraint_window = 0.8
+        self.global_obstacles = []
+        self.bezier_sparse_mode = True
+        self.bezier_corner_angle = math.radians(25.0)
         
         self.ackermann_planner = AckermannPathPlanner()
         self.interpolation_method = 'spline'
@@ -139,7 +145,23 @@ class PathManager:
                 smooth_points = np.array(self.ackermann_planner.plan_path(waypoints_to_use))
             elif self.interpolation_method == 'local_bezier':
                 waypoints_np = np.array(waypoints_to_use)
-                smooth_points = generate_smooth_path(waypoints_np, ds=ds)
+                if BEZIER_AVAILABLE:
+                    smooth_points = generate_bezier_from_waypoints(
+                        waypoints_np,
+                        ds=ds,
+                        constraints=self.global_constraints,
+                        constraint_window=self.global_constraint_window,
+                        sparse_only=self.bezier_sparse_mode,
+                        corner_angle_threshold=self.bezier_corner_angle,
+                        obstacles=self.global_obstacles,
+                    )
+                    if smooth_points is None:
+                        self.node.get_logger().warn(
+                            "⚠️ local_bezier: 제어점이 부족해 spline으로 대체합니다."
+                        )
+                        smooth_points = generate_smooth_path(waypoints_np, ds=ds)
+                else:
+                    smooth_points = generate_smooth_path(waypoints_np, ds=ds)
             else:
                 waypoints_np = np.array(waypoints_to_use)
                 smooth_points = generate_smooth_path(waypoints_np, ds=ds)
@@ -183,8 +205,19 @@ class PathManager:
             return
         
         try:
+            lookahead = 0.6
+            if self.constraint_points:
+                nearest_cp = self.nearest_constraint_distance(robot_pos)
+                if nearest_cp is None:
+                    nearest_cp = 0.8
+                extra = np.clip(1.0 - nearest_cp, 0.0, 0.8)
+                lookahead += extra
+
             local_bezier_points = split_global_to_local_bezier(
-                self.global_path, robot_pos, lookahead_dist=0.5
+                self.global_path,
+                robot_pos,
+                lookahead_dist=lookahead,
+                constraints=self.constraint_points,
             )
             
             if local_bezier_points is None or len(local_bezier_points) < 2:
@@ -261,6 +294,28 @@ class PathManager:
     def set_robot_start(self, robot_pos):
         self.robot_start_pos = robot_pos
 
+    def update_constraint_points(self, constraint_points):
+        self.constraint_points = constraint_points
+
+    def update_global_constraints(self, constraint_points, window: float | None = None, replan: bool = False):
+        self.global_constraints = constraint_points or []
+        if window is not None:
+            self.global_constraint_window = float(window)
+        if replan and len(self.waypoints) >= 2:
+            self._update_path()
+
+    def update_global_obstacles(self, obstacles, replan: bool = False):
+        self.global_obstacles = obstacles or []
+        if replan and len(self.waypoints) >= 2:
+            self._update_path()
+
+    def nearest_constraint_distance(self, robot_pos):
+        if not self.constraint_points:
+            return None
+
+        robot_xy = np.array(robot_pos)
+        return min(np.linalg.norm(cp - robot_xy) for cp in self.constraint_points)
+
     def get_local_path(self):
         return self.local_path
     
@@ -279,3 +334,6 @@ class PathManager:
         self.local_path = None
         self.velocities.clear()
         self.global_curvatures.clear()
+        self.constraint_points.clear()
+        self.global_constraints.clear()
+        self.global_obstacles.clear()
