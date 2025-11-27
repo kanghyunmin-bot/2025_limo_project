@@ -88,12 +88,18 @@ def _apply_constraint_offset(control_points, constraints, avoid_margin=0.45, max
             dist_norm = np.linalg.norm(curve_to_cp)
 
         offset_dir = curve_to_cp / dist_norm
-        strength = (avoid_margin - curve_dist + clearance) / max(avoid_margin, 1e-6)
+        strength = np.clip(
+            (avoid_margin - curve_dist + clearance) / max(avoid_margin, 1e-6),
+            0.0,
+            2.0,
+        )
         along = np.clip(proj / (path_norm + 1e-6), 0.0, 1.0)
 
-        # 시작/끝 쪽 제어점을 분리해서 밀기
-        offset_p1 += offset_dir * max(0.25, 1.0 - along)
-        offset_p2 += offset_dir * max(0.25, along)
+        # 시작/끝 쪽 제어점을 분리해서 밀기 (가까울수록 더 강하게)
+        base_p1 = max(0.35, 1.0 - along)
+        base_p2 = max(0.35, along)
+        offset_p1 += offset_dir * strength * base_p1
+        offset_p2 += offset_dir * strength * base_p2
 
     def _clip_offset(vec):
         norm = np.linalg.norm(vec)

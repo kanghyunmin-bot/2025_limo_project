@@ -20,6 +20,7 @@ class LidarConstraintFilter:
         angle_resolution: float = math.radians(10.0),
         max_constraints: int = 20,
         cluster_distance: float = 0.3,
+        inflate_clearance: float = 0.35,
     ):
         self.min_range = min_range
         self.max_range = max_range
@@ -29,6 +30,7 @@ class LidarConstraintFilter:
         self.angle_resolution = angle_resolution
         self.max_constraints = max_constraints
         self.cluster_distance = cluster_distance
+        self.inflate_clearance = inflate_clearance
 
     def _filter_pointcloud(self, cloud: PointCloud2) -> List[Tuple[float, float, float, float]]:
         pts: List[Tuple[float, float, float, float]] = []
@@ -128,7 +130,17 @@ class LidarConstraintFilter:
                 bins[bin_idx] = (rng, x, y)
 
         selected = sorted(bins.values(), key=lambda t: t[0])[: self.max_constraints]
-        return [np.array([x, y]) for _, x, y in selected]
+        inflated = []
+        for rng, x, y in selected:
+            norm = math.hypot(x, y)
+            if norm < 1e-6:
+                continue
+
+            inflated_range = norm + self.inflate_clearance
+            scale = inflated_range / norm
+            inflated.append(np.array([x * scale, y * scale]))
+
+        return inflated
 
     def build_constraints(self, data) -> List[np.ndarray]:
         """Polar binning으로 최근접 장애물을 cp로 선택.
