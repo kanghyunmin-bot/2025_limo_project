@@ -103,7 +103,7 @@ rviz2 -d rviz_config/path_follower.rviz
    ```bash
    ros2 topic pub --once /path_follower/interpolation_method std_msgs/String "data: 'local_bezier'"
    ```
-   글로벌 경로는 그대로 유지하면서 로봇 근처(약 0.5m) 구간만 Bézier로 재생성됩니다.
+   웨이포인트는 스플라인 대신 **연속된 3차 Bézier 체인**으로 글로벌 경로를 만들고, 로봇 근처(약 0.5m) 구간만 LiDAR 제약을 반영해 다시 굽혀집니다.
 
 3. **동작 확인**
    - LiDAR가 포인트 클라우드나 스캔을 내보내면 `odom` 프레임으로 변환된 제약점이 자동 반영돼 로컬 경로가 장애물을 피해 굽어집니다.

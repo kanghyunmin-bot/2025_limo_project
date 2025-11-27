@@ -10,7 +10,7 @@ from .ackermann_path_planner import AckermannPathPlanner
 
 # ✅ 조건부 import
 try:
-    from .bezier_utils import split_global_to_local_bezier
+    from .bezier_utils import generate_bezier_from_waypoints, split_global_to_local_bezier
     BEZIER_AVAILABLE = True
 except ImportError:
     BEZIER_AVAILABLE = False
@@ -140,7 +140,15 @@ class PathManager:
                 smooth_points = np.array(self.ackermann_planner.plan_path(waypoints_to_use))
             elif self.interpolation_method == 'local_bezier':
                 waypoints_np = np.array(waypoints_to_use)
-                smooth_points = generate_smooth_path(waypoints_np, ds=ds)
+                if BEZIER_AVAILABLE:
+                    smooth_points = generate_bezier_from_waypoints(waypoints_np, ds=ds)
+                    if smooth_points is None:
+                        self.node.get_logger().warn(
+                            "⚠️ local_bezier: 제어점이 부족해 spline으로 대체합니다."
+                        )
+                        smooth_points = generate_smooth_path(waypoints_np, ds=ds)
+                else:
+                    smooth_points = generate_smooth_path(waypoints_np, ds=ds)
             else:
                 waypoints_np = np.array(waypoints_to_use)
                 smooth_points = generate_smooth_path(waypoints_np, ds=ds)

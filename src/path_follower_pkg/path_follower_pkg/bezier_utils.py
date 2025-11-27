@@ -210,24 +210,36 @@ def split_global_to_local_bezier(global_path, robot_pos, lookahead_dist=0.5, con
     return bezier_points
 
 
-def generate_bezier_from_waypoints(waypoints, num_points_per_segment=50):
-    """Waypoint들을 연결하는 연속적인 Bézier curves 생성"""
+def generate_bezier_from_waypoints(waypoints, num_points_per_segment=50, ds=None):
+    """Waypoint들을 연결하는 연속적인 Bézier curves 생성
+
+    ds를 주면 구간 길이에 비례해 점을 촘촘히 찍어 spline 모드와 비슷한 해상도를 유지합니다.
+    """
     if len(waypoints) < 2:
         return None
-    
+
     all_curves = []
-    
+
     for i in range(len(waypoints) - 1):
         P0 = np.array(waypoints[i])
         P3 = np.array(waypoints[i + 1])
-        
+
         direction = P3 - P0
+        seg_len = float(np.linalg.norm(direction))
+        if seg_len < 1e-6:
+            continue
+
         P1 = P0 + direction / 3
         P2 = P0 + 2 * direction / 3
-        
+
+        if ds is not None and ds > 0:
+            num_points = max(int(seg_len / ds), 2)
+        else:
+            num_points = num_points_per_segment
+
         control_points = np.array([P0, P1, P2, P3])
-        curve = bezier_curve(control_points, num_points_per_segment)
-        
+        curve = bezier_curve(control_points, num_points)
+
         all_curves.append(curve)
-    
-    return np.vstack(all_curves)
+
+    return np.vstack(all_curves) if all_curves else None
