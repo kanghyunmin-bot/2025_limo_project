@@ -3,6 +3,160 @@ import numpy as np
 import math
 
 
+def _lerp2(p, q, t):
+    return p + (q - p) * t
+
+
+def _de_casteljau_split(ctrl, t):
+    """Split arbitrary-degree Bézier at t, returning (left, right) control points."""
+
+    work = [ctrl]
+    n = len(ctrl) - 1
+    for _ in range(1, n + 1):
+        prev = work[-1]
+        cur = np.array([_lerp2(prev[i], prev[i + 1], t) for i in range(len(prev) - 1)])
+        work.append(cur)
+    left = [work[i][0] for i in range(n + 1)]
+    right = [work[n - i][i] for i in range(n + 1)]
+    return np.array(left), np.array(right)
+
+
+def _bezier_eval(ctrl, t):
+    pts = np.array(ctrl, dtype=float)
+    n = len(pts) - 1
+    for _ in range(1, n + 1):
+        pts = np.array([_lerp2(pts[i], pts[i + 1], t) for i in range(len(pts) - 1)])
+    return pts[0]
+
+
+def _bezier_flatness(ctrl):
+    p0, pn = ctrl[0], ctrl[-1]
+    dx, dy = pn[0] - p0[0], pn[1] - p0[1]
+    denom = math.hypot(dx, dy)
+    if denom < 1e-9:
+        return 0.0
+
+    mx = 0.0
+    for p in ctrl[1:-1]:
+        num = abs(dy * (p[0] - p0[0]) - dx * (p[1] - p0[1]))
+        mx = max(mx, num / denom)
+    return mx
+
+
+def _aabb_of_points(pts):
+    xs = pts[:, 0]
+    ys = pts[:, 1]
+    return (float(xs.min()), float(ys.min()), float(xs.max()), float(ys.max()))
+
+
+def _aabb_overlap(a, b):
+    ax0, ay0, ax1, ay1 = a
+    bx0, by0, bx1, by1 = b
+    return not (ax1 < bx0 or bx1 < ax0 or ay1 < by0 or by1 < ay0)
+
+
+def _segment_circle_intersect(a, b, center, r):
+    (x1, y1), (x2, y2) = a, b
+    (cx, cy) = center
+    dx, dy = x2 - x1, y2 - y1
+    if abs(dx) < 1e-9 and abs(dy) < 1e-9:
+        return math.hypot(cx - x1, cy - y1) <= r + 1e-12
+
+    t = ((cx - x1) * dx + (cy - y1) * dy) / (dx * dx + dy * dy)
+    t = max(0.0, min(1.0, t))
+    px, py = x1 + t * dx, y1 + t * dy
+    return math.hypot(px - cx, py - cy) <= r + 1e-12
+
+
+def _find_intervals_bezier_hits(ctrl, obstacles, t0=0.0, t1=1.0, flat_eps=1e-2, max_depth=26):
+    """Detect t-intervals where Bézier curve intersects inflated circular obstacles."""
+
+    hits = []
+
+    def rec(ctrl_local, a, b, depth):
+        aabb = _aabb_of_points(ctrl_local)
+        if not any(_aabb_overlap(aabb, (c[0][0] - c[1], c[0][1] - c[1], c[0][0] + c[1], c[0][1] + c[1])) for c in obstacles):
+            return
+
+        if (depth >= max_depth) or (_bezier_flatness(ctrl_local) <= flat_eps):
+            p0, p1 = ctrl_local[0], ctrl_local[-1]
+            if any(_segment_circle_intersect(p0, p1, c[0], c[1]) for c in obstacles):
+                hits.append((a, b))
+            return
+
+        L, R = _de_casteljau_split(ctrl_local, 0.5)
+        m = 0.5 * (a + b)
+        rec(L, a, m, depth + 1)
+        rec(R, m, b, depth + 1)
+
+    rec(np.array(ctrl, dtype=float), t0, t1, 0)
+    hits.sort()
+
+    merged = []
+    for seg in hits:
+        if not merged or seg[0] > merged[-1][1] + 1e-6:
+            merged.append(list(seg))
+        else:
+            merged[-1][1] = max(merged[-1][1], seg[1])
+    return [(float(a), float(b)) for (a, b) in merged]
+
+
+def _push_away_from_obstacles(control_points, obstacles, flat_eps=1e-2):
+    """Push mid control points (P1/P2) outward until curve clears obstacle circles."""
+
+    if not obstacles or len(control_points) < 4:
+        return control_points
+
+    cp = control_points.copy()
+    p0, p1, p2, p3 = cp
+
+    base_step = 0.045
+    k = 0.9
+    clearance = 0.1
+    max_passes = 35
+
+    for _ in range(max_passes):
+        intervals = _find_intervals_bezier_hits(cp, obstacles, flat_eps=flat_eps)
+        if not intervals:
+            break
+
+        moved = False
+        for (a, b) in intervals:
+            for tmid in (a, 0.5 * (a + b), b):
+                mid = _bezier_eval(cp, tmid)
+
+                best_obs = None
+                best_penetr = None
+                for center, radius in obstacles:
+                    dist = math.hypot(mid[0] - center[0], mid[1] - center[1])
+                    penetr = radius - dist
+                    if best_penetr is None or penetr > best_penetr:
+                        best_penetr = penetr
+                        best_obs = (center, radius, dist)
+
+                if best_obs is None:
+                    continue
+
+                center, radius, dist = best_obs
+                vx, vy = mid[0] - center[0], mid[1] - center[1]
+                norm = math.hypot(vx, vy)
+                if norm < 1e-6:
+                    vx, vy = 1.0, 0.0
+                    norm = 1.0
+                nx, ny = vx / norm, vy / norm
+
+                push = max(base_step, k * (max(0.0, radius - dist) + clearance))
+                p1 = (p1[0] + push * nx, p1[1] + push * ny)
+                p2 = (p2[0] + push * nx, p2[1] + push * ny)
+                moved = True
+
+        cp = np.array([p0, p1, p2, p3], dtype=float)
+        if not moved:
+            base_step *= 1.35
+
+    return cp
+
+
 def bezier_curve(control_points, num_points=50):
     """Bézier curve 생성"""
     n = len(control_points) - 1
@@ -217,6 +371,7 @@ def generate_bezier_from_waypoints(
     constraints=None,
     constraint_window: float = 0.9,
     tension: float = 0.28,
+    obstacles=None,
 ):
     """Waypoint 기반 글로벌 Bézier 체인 생성.
 
@@ -243,6 +398,10 @@ def generate_bezier_from_waypoints(
 
     all_curves = []
     constraint_arr = [np.array(c) for c in (constraints or [])]
+    obstacle_arr = []
+    for obs in obstacles or []:
+        center, radius = obs
+        obstacle_arr.append((np.array(center, dtype=float), float(radius)))
 
     for i in range(n - 1):
         P0 = wp[i]
@@ -259,6 +418,8 @@ def generate_bezier_from_waypoints(
         P1 = P0 + t0 * tension * seg_len
         P2 = P3 - t1 * tension * seg_len
 
+        control_points = np.array([P0, P1, P2, P3], dtype=float)
+
         # 세그먼트 주변 코스트맵 제약을 중간 제어점에만 반영
         if constraint_arr:
             seg_constraints = []
@@ -268,18 +429,21 @@ def generate_bezier_from_waypoints(
                     seg_constraints.append(cp)
             if seg_constraints:
                 cp_adjusted = _apply_constraint_offset(
-                    np.array([P0, P1, P2, P3], dtype=float),
+                    control_points.copy(),
                     seg_constraints,
                     exclusion_radius=max(constraint_window, 0.6),
                 )
-                P1, P2 = cp_adjusted[1], cp_adjusted[2]
+                control_points[1], control_points[2] = cp_adjusted[1], cp_adjusted[2]
+
+        if obstacle_arr:
+            safe_cp = _push_away_from_obstacles(control_points, obstacle_arr)
+            control_points[1], control_points[2] = safe_cp[1], safe_cp[2]
 
         if ds is not None and ds > 0:
             num_points = max(int(seg_len / ds), 2)
         else:
             num_points = num_points_per_segment
 
-        control_points = np.array([P0, P1, P2, P3])
         curve = bezier_curve(control_points, num_points)
 
         all_curves.append(curve)

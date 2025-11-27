@@ -37,6 +37,8 @@ class PathFollower(Node):
         self.declare_parameter('global_costmap_search_radius', 3.0)
         self.declare_parameter('global_costmap_path_window', 0.8)
         self.declare_parameter('global_costmap_inflate_margin', 0.35)
+        self.declare_parameter('global_costmap_robot_radius', 0.20)
+        self.declare_parameter('global_costmap_safety_margin', 0.05)
         self.declare_parameter('global_costmap_stride', 2)
         self.declare_parameter('global_costmap_max_constraints', 60)
         
@@ -73,6 +75,8 @@ class PathFollower(Node):
             search_radius=float(self.get_parameter('global_costmap_search_radius').value),
             path_window=float(self.get_parameter('global_costmap_path_window').value),
             inflate_margin=float(self.get_parameter('global_costmap_inflate_margin').value),
+            robot_radius=float(self.get_parameter('global_costmap_robot_radius').value),
+            safety_margin=float(self.get_parameter('global_costmap_safety_margin').value),
             stride=int(self.get_parameter('global_costmap_stride').value),
             max_constraints=int(self.get_parameter('global_costmap_max_constraints').value),
         )
@@ -85,6 +89,7 @@ class PathFollower(Node):
         self.lidar_constraints = []
         self.costmap_constraints = []
         self.costmap_constraints_global = []
+        self.costmap_obstacles = []
         
         # ✅ 주기 관리용 타이머
         self.last_local_update_time = time.time()
@@ -208,11 +213,14 @@ class PathFollower(Node):
         )
         self.costmap_constraints = constraints
         self.costmap_constraints_global = global_constraints
+        self.costmap_obstacles = self.costmap_filter.build_obstacle_circles()
         self._update_combined_constraints()
         self.path_manager.update_global_constraints(
             self.costmap_constraints_global,
             window=float(self.get_parameter('global_costmap_path_window').value),
+            replan=True,
         )
+        self.path_manager.update_global_obstacles(self.costmap_obstacles, replan=True)
     
     def on_path_source(self, msg: String):
         if msg.data in ['clicked_point', 'planner_path']:

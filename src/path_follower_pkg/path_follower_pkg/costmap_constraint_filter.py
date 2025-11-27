@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import math
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 from nav_msgs.msg import OccupancyGrid
@@ -20,6 +20,8 @@ class CostmapConstraintFilter:
         search_radius: float = 3.0,
         path_window: float = 0.8,
         inflate_margin: float = 0.35,
+        robot_radius: float = 0.20,
+        safety_margin: float = 0.05,
         stride: int = 2,
         max_constraints: int = 60,
     ):
@@ -27,6 +29,8 @@ class CostmapConstraintFilter:
         self.search_radius = search_radius
         self.path_window = path_window
         self.inflate_margin = inflate_margin
+        self.robot_radius = robot_radius
+        self.safety_margin = safety_margin
         self.stride = max(1, stride)
         self.max_constraints = max_constraints
 
@@ -34,6 +38,27 @@ class CostmapConstraintFilter:
         self._resolution: float = 0.0
         self._origin = np.zeros(2)
         self._frame_id: Optional[str] = None
+
+    def build_obstacle_circles(self) -> List[Tuple[np.ndarray, float]]:
+        """Convert occupied cells into inflated circular obstacles for Bézier collision checks.
+
+        The radius is conservative: half a cell's diagonal plus robot radius and a safety margin.
+        """
+
+        if self._grid is None:
+            return []
+
+        mask = self._grid >= self.cost_threshold
+        if not np.any(mask):
+            return []
+
+        ys, xs = np.nonzero(mask)
+        centers = self._world_from_index(xs, ys)
+
+        cell_diag = self._resolution * math.sqrt(2) * 0.5
+        radius = cell_diag + self.robot_radius + self.safety_margin
+
+        return [(c, float(radius + self.inflate_margin)) for c in centers]
 
     def update_costmap(self, msg: OccupancyGrid):
         if msg.info.width == 0 or msg.info.height == 0:

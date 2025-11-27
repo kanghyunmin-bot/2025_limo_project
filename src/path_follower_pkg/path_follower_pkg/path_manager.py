@@ -32,6 +32,7 @@ class PathManager:
         self.constraint_points = []
         self.global_constraints = []
         self.global_constraint_window = 0.8
+        self.global_obstacles = []
         
         self.ackermann_planner = AckermannPathPlanner()
         self.interpolation_method = 'spline'
@@ -148,6 +149,7 @@ class PathManager:
                         ds=ds,
                         constraints=self.global_constraints,
                         constraint_window=self.global_constraint_window,
+                        obstacles=self.global_obstacles,
                     )
                     if smooth_points is None:
                         self.node.get_logger().warn(
@@ -291,10 +293,17 @@ class PathManager:
     def update_constraint_points(self, constraint_points):
         self.constraint_points = constraint_points
 
-    def update_global_constraints(self, constraint_points, window: float | None = None):
+    def update_global_constraints(self, constraint_points, window: float | None = None, replan: bool = False):
         self.global_constraints = constraint_points or []
         if window is not None:
             self.global_constraint_window = float(window)
+        if replan and len(self.waypoints) >= 2:
+            self._update_path()
+
+    def update_global_obstacles(self, obstacles, replan: bool = False):
+        self.global_obstacles = obstacles or []
+        if replan and len(self.waypoints) >= 2:
+            self._update_path()
 
     def nearest_constraint_distance(self, robot_pos):
         if not self.constraint_points:
@@ -323,3 +332,4 @@ class PathManager:
         self.global_curvatures.clear()
         self.constraint_points.clear()
         self.global_constraints.clear()
+        self.global_obstacles.clear()
