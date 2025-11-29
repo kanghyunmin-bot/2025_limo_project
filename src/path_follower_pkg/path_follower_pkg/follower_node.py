@@ -232,8 +232,8 @@ class PathFollower(Node):
     def on_interpolation_method(self, msg: String):
         self.interpolation_method = msg.data
         self.path_manager.interpolation_method = msg.data
-        if self.interpolation_method == 'local_bezier':
-            # local_bezier 모드로 전환 시 최신 코스트맵 제약을 적용하도록 표시
+        if self.interpolation_method in ['local_bezier', 'only_global_bezier']:
+            # Bézier 계열에서 코스트맵 기반 제약을 활용할 수 있도록 갱신 플래그 설정
             self.pending_costmap_update = True
     
     def on_velocity_params(self, msg: Twist):
@@ -257,7 +257,7 @@ class PathFollower(Node):
         if not self.pending_costmap_update:
             return
 
-        if self.path_manager.interpolation_method != 'local_bezier':
+        if self.path_manager.interpolation_method not in ['local_bezier', 'only_global_bezier']:
             self.pending_costmap_update = False
             return
 

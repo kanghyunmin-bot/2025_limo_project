@@ -93,7 +93,7 @@ rviz2 -d rviz_config/path_follower.rviz
 ---
 
 ## 🛡️ 로컬 Bézier + LiDAR 동적 회피 사용법
-`local_bezier` 보간 모드와 LiDAR 제약(cp) 포인트를 함께 쓰면 글로벌 경로를 기준으로 로컬 경로를 실시간으로 굽혀서 장애물을 피할 수 있습니다. 아래 절차대로 설정하세요. (제약/코스트맵 기반 굽힘은 **`local_bezier` 모드에서만** 적용되고, 다른 보간 모드는 이름대로 직선·서브샘플·스플라인/Bezier를 그대로 따릅니다. 글로벌 경로만 Bézier 체인으로 피팅하고 싶다면 GUI에서 **only_global_bezier**(또는 토픽으로 `only_global_bezier`)를 선택하면 로컬 굽힘 없이 전역 Bézier를 그대로 따라갑니다.)
+`local_bezier` 보간 모드와 LiDAR 제약(cp) 포인트를 함께 쓰면 글로벌 경로를 기준으로 로컬 경로를 실시간으로 굽혀서 장애물을 피할 수 있습니다. 아래 절차대로 설정하세요. (제약/코스트맵 기반 굽힘은 **`local_bezier`**에서 로컬 세그먼트에 적용되고, **`only_global_bezier`**에서는 글로벌 경로 전체를 Bézier 체인으로 만들 때 코스트맵 제약/장애물을 고려한 뒤 로컬 굽힘 없이 그대로 따라갑니다. 그 밖의 보간 모드는 이름대로 직선·서브샘플·스플라인/Bezier를 그대로 따릅니다.)
 
 1. **동적 회피 파라미터 확인**
    - `enable_dynamic_avoidance`(기본 `True`)를 끄지 않았는지 확인합니다.
@@ -116,7 +116,7 @@ ros2 topic pub --once /path_follower/interpolation_method std_msgs/String "data:
 ```
 웨이포인트는 스플라인 대신 **연속된 3차 Bézier 체인**으로 글로벌 경로를 만들고, 로봇 근처(약 0.5m) 구간만 LiDAR 제약을 반영해 다시 굽혀집니다.
 
-글로벌 Bézier만 쓰고 싶다면:
+글로벌 Bézier만 쓰고 싶다면 (코스트맵 제약을 반영한 전역 곡선, 로컬 굽힘 없음):
 ```bash
 ros2 topic pub --once /path_follower/interpolation_method std_msgs/String "data: 'only_global_bezier'"
 ```
