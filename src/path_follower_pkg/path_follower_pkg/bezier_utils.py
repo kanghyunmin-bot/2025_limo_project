@@ -167,6 +167,27 @@ def _push_away_from_obstacles(
     return cp
 
 
+def _adaptive_bezier_sample(control_points, max_seg_len=0.14, min_points: int = 8):
+    """디카스텔쥬 분할을 길이 기준으로 반복해 과도한 샘플링 없이 곡선 모양을 보존."""
+
+    pts = [control_points[0]]
+
+    def subdiv(ctrl):
+        chord = np.linalg.norm(ctrl[-1] - ctrl[0])
+        if chord <= max_seg_len and _bezier_flatness(ctrl) <= max_seg_len * 0.5:
+            pts.append(ctrl[-1])
+            return
+        left, right = _de_casteljau_split(ctrl, 0.5)
+        subdiv(left)
+        subdiv(right)
+
+    subdiv(np.array(control_points, dtype=float))
+    if len(pts) < min_points:
+        t_vals = np.linspace(0.0, 1.0, min_points)
+        return np.array([_bezier_eval(control_points, t) for t in t_vals])
+    return np.array(pts)
+
+
 def bezier_curve(control_points, num_points=50):
     """Bézier curve 생성"""
     n = len(control_points) - 1
@@ -414,10 +435,9 @@ def split_global_to_local_bezier(global_path, robot_pos, lookahead_dist=0.5, con
                 gain=0.85,
                 max_passes=18,
             )
-    
-    # 4. ✅ Bézier curve 생성 (더 조밀하게)
-    num_bezier_points = max(15, int(cumulative_dist / 0.03))  # 3cm 간격
-    bezier_points = bezier_curve(control_points, num_bezier_points)
+
+    # 4. ✅ Bézier curve 생성 (길이 기반 분할, 과도한 샘플링 제거)
+    bezier_points = _adaptive_bezier_sample(control_points, max_seg_len=0.16, min_points=10)
     
     # 5. ✅ Shortcut 방지: 원본 경로와 너무 멀어지면 원본 반환
     # 각 Bézier 점이 원본 경로로부터 얼마나 떨어졌는지 체크

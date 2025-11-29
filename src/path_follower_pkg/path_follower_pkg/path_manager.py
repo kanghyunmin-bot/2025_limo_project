@@ -7,6 +7,7 @@ from std_msgs.msg import Bool, String
 
 from .spline_utils import compute_path_curvature, generate_smooth_path
 from .ackermann_path_planner import AckermannPathPlanner
+from .rrt_planner import RRTPlanner
 
 # ✅ 조건부 import
 try:
@@ -35,8 +36,9 @@ class PathManager:
         self.global_obstacles = []
         self.global_obstacle_window = 1.0
         self.global_obstacle_cap = 32
-        
+
         self.ackermann_planner = AckermannPathPlanner()
+        self.rrt_planner = RRTPlanner()
         self.interpolation_method = 'spline'
         self.drive_mode = 'differential'
         self.use_ackermann_path = False
@@ -127,14 +129,17 @@ class PathManager:
     def _update_path(self):
         if len(self.waypoints) < 2:
             return
-        
+
         try:
             ds = 0.08
-            
+
             waypoints_to_use = self.waypoints.copy()
             if self.robot_start_pos is not None:
                 waypoints_to_use[0] = (self.robot_start_pos[0], self.robot_start_pos[1])
-            
+
+            if self.global_obstacles and self.interpolation_method in ['bezier', 'local_bezier']:
+                waypoints_to_use = self._rrt_bridge_waypoints(waypoints_to_use)
+
             if self.interpolation_method == 'none':
                 smooth_points = np.array(waypoints_to_use)
             elif self.interpolation_method == 'linear':
@@ -192,10 +197,48 @@ class PathManager:
                 )
             
             self.local_path = self.global_path
-            
+
         except Exception as e:
             self.node.get_logger().error(f"❌ {e}")
-    
+
+    def _rrt_bounds(self, p0: np.ndarray, p1: np.ndarray):
+        low = np.minimum(p0, p1) - (self.global_obstacle_window + 0.6)
+        high = np.maximum(p0, p1) + (self.global_obstacle_window + 0.6)
+        return low, high
+
+    def _rrt_bridge_waypoints(self, waypoints):
+        """Waypoint 사이를 RRT로 연결해 코스트맵 장애물을 피해가는 얇은 경로를 만든다."""
+
+        if len(waypoints) < 2:
+            return waypoints
+
+        planned: list[np.ndarray] = [np.array(waypoints[0], dtype=float)]
+        for i in range(len(waypoints) - 1):
+            start = planned[-1]
+            goal = np.array(waypoints[i + 1], dtype=float)
+            # 세그먼트 인근 장애물만 추려 RRT 충돌 검사를 단순화
+            seg_mid = 0.5 * (start + goal)
+            seg_len = np.linalg.norm(goal - start) + 1e-6
+            seg_obs = [
+                (c, r)
+                for (c, r) in self.global_obstacles
+                if np.linalg.norm(c - seg_mid) <= seg_len + self.global_obstacle_window
+            ]
+            rrt_path = self.rrt_planner.plan(
+                start,
+                goal,
+                obstacles=seg_obs,
+                bounds=self._rrt_bounds(start, goal),
+            )
+            if not rrt_path:
+                planned.append(goal)
+                continue
+            # 첫 점은 이미 planned[-1]에 있으므로 제외
+            for pt in rrt_path[1:]:
+                planned.append(pt)
+
+        return [(float(p[0]), float(p[1])) for p in planned]
+
     def update_local_path_with_cp(self, robot_pos):
         """✅ Local Bézier 실시간 업데이트"""
         if self.interpolation_method != 'local_bezier' or not BEZIER_AVAILABLE:

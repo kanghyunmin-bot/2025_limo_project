@@ -97,30 +97,25 @@ class CostmapConstraintFilter:
         scale = (norm + self.inflate_margin) / norm
         return nearest + offset * scale
 
-    def _nearest_indices_and_dist(self, world_pts: np.ndarray, path_pts: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """최소 거리/인덱스를 메모리 폭주 없이 계산."""
+    def _polyline_min_distance(self, pt: np.ndarray, path_pts: np.ndarray) -> float:
+        if path_pts.shape[0] < 2:
+            return float("inf")
 
-        if world_pts.size == 0 or path_pts.size == 0:
-            return np.array([], dtype=int), np.array([])
-
-        min_dist_sq = np.full(world_pts.shape[0], np.inf, dtype=float)
-        min_idx = np.zeros(world_pts.shape[0], dtype=int)
-
-        # 경로 점을 청크 단위로 나눠 거리 계산
-        for start in range(0, path_pts.shape[0], self._chunk):
-            end = start + self._chunk
-            path_chunk = path_pts[start:end]
-            diffs = world_pts[:, None, :] - path_chunk[None, :, :]
-            dist_sq = np.sum(diffs ** 2, axis=2)
-
-            local_min_idx = np.argmin(dist_sq, axis=1)
-            local_min = dist_sq[np.arange(dist_sq.shape[0]), local_min_idx]
-
-            better = local_min < min_dist_sq
-            min_dist_sq[better] = local_min[better]
-            min_idx[better] = local_min_idx[better] + start
-
-        return min_idx, np.sqrt(min_dist_sq)
+        min_dist = float("inf")
+        for i in range(path_pts.shape[0] - 1):
+            a = path_pts[i]
+            b = path_pts[i + 1]
+            ab = b - a
+            denom = np.dot(ab, ab)
+            if denom < 1e-9:
+                dist = np.linalg.norm(pt - a)
+            else:
+                t = np.clip(np.dot(pt - a, ab) / denom, 0.0, 1.0)
+                proj = a + t * ab
+                dist = np.linalg.norm(pt - proj)
+            if dist < min_dist:
+                min_dist = dist
+        return min_dist
 
     def _path_points(self, path: Sequence, limit_radius: float | None = None, center: np.ndarray | None = None) -> np.ndarray:
         if path is None:
@@ -165,34 +160,27 @@ class CostmapConstraintFilter:
         ys = ys * self.stride
 
         world_pts = self._world_from_index(xs, ys)
-        # Robot-proximate filtering
         d_robot = np.linalg.norm(world_pts - robot_xy, axis=1)
         keep_robot = d_robot <= self.search_radius
         if not np.any(keep_robot):
             return []
         world_pts = world_pts[keep_robot]
 
-        path_pts = self._path_points(global_path.poses, limit_radius=self.search_radius + self.path_window, center=robot_xy)
+        path_pts = self._path_points(
+            global_path.poses,
+            limit_radius=self.search_radius + self.path_window,
+            center=robot_xy,
+        )
         if path_pts.size == 0:
             return []
 
-        nearest_idx, min_dist = self._nearest_indices_and_dist(world_pts, path_pts)
-
-        keep_path = min_dist <= self.path_window
-        if not np.any(keep_path):
-            return []
-
-        world_pts = world_pts[keep_path]
-        nearest_idx = nearest_idx[keep_path]
-        min_dist = min_dist[keep_path]
-
         constraints: List[np.ndarray] = []
-        for pt, idx, d in zip(world_pts, nearest_idx, min_dist):
-            nearest = path_pts[int(idx)]
-            inflated = self._inflate_toward_path(pt, nearest)
-            # If the raw point is already outside the window, skip (extra guard)
-            if d > self.path_window:
+        for pt in world_pts:
+            dist = self._polyline_min_distance(pt, path_pts)
+            if dist > self.path_window:
                 continue
+            nearest_idx = int(np.argmin(np.linalg.norm(path_pts - pt, axis=1)))
+            inflated = self._inflate_toward_path(pt, path_pts[nearest_idx])
             constraints.append(inflated)
             if len(constraints) >= self.max_constraints:
                 break
@@ -243,22 +231,13 @@ class CostmapConstraintFilter:
             return []
         world_pts = world_pts[within]
 
-        nearest_idx, min_dist = self._nearest_indices_and_dist(world_pts, path_pts)
-
-        keep_path = min_dist <= self.path_window
-        if not np.any(keep_path):
-            return []
-
-        world_pts = world_pts[keep_path]
-        nearest_idx = nearest_idx[keep_path]
-        min_dist = min_dist[keep_path]
-
         constraints: List[np.ndarray] = []
-        for pt, idx, d in zip(world_pts, nearest_idx, min_dist):
-            nearest = path_pts[int(idx)]
-            inflated = self._inflate_toward_path(pt, nearest)
-            if d > self.path_window:
+        for pt in world_pts:
+            dist = self._polyline_min_distance(pt, path_pts)
+            if dist > self.path_window:
                 continue
+            nearest_idx = int(np.argmin(np.linalg.norm(path_pts - pt, axis=1)))
+            inflated = self._inflate_toward_path(pt, path_pts[nearest_idx])
             constraints.append(inflated)
             if len(constraints) >= self.max_constraints:
                 break
