@@ -37,10 +37,12 @@ class EventHandlers:
         msg = String()
         msg.data = mode
         self.node.pub_control_mode.publish(msg)
-        
+
         try:
             if mode == 'pure_pursuit':
                 self.widgets['control_mode'].label.config(text="현재: Pure Pursuit", foreground="blue")
+            elif mode == 'stanley_ff':
+                self.widgets['control_mode'].label.config(text="현재: Stanley + Feedforward", foreground="dark green")
             else:
                 self.widgets['control_mode'].label.config(text="현재: Stanley Method", foreground="purple")
             self.update_status()
@@ -239,9 +241,15 @@ class EventHandlers:
         try:
             if 'status' not in self.widgets:
                 return
-            
+
             mode_str = "MANUAL" if self.manual_mode else "AUTO"
-            control_str = "Pure Pursuit" if self.control_mode == 'pure_pursuit' else "Stanley"
+            if self.control_mode == 'pure_pursuit':
+                control_str = "Pure Pursuit"
+            elif self.control_mode == 'stanley_ff':
+                control_str = "Stanley+FF"
+            else:
+                control_str = "Stanley"
+
             drive_type_str = "Differential" if self.drive_mode == 'differential' else "Ackermann"
             
             interp_short = {
