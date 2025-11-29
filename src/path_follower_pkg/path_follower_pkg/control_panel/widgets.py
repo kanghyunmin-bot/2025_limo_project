@@ -13,13 +13,19 @@ class ControlModeFrame:
             command=lambda: handler.set_control_mode('pure_pursuit'), width=25
         )
         self.btn_pure_pursuit.pack(side=tk.LEFT, padx=5)
-        
+
         self.btn_stanley = ttk.Button(
             self.frame, text="Stanley Method",
             command=lambda: handler.set_control_mode('stanley'), width=25
         )
         self.btn_stanley.pack(side=tk.LEFT, padx=5)
-        
+
+        self.btn_stanley_ff = ttk.Button(
+            self.frame, text="Stanley + FF",
+            command=lambda: handler.set_control_mode('stanley_ff'), width=25
+        )
+        self.btn_stanley_ff.pack(side=tk.LEFT, padx=5)
+
         self.label = ttk.Label(
             self.frame, text="현재: Stanley Method",
             foreground="blue", font=("Arial", 10, "bold")
@@ -69,6 +75,7 @@ class PathInterpolationFrame:
             ('linear', '📏 Linear (직선 연결)'),
             ('subsample', '📍 Subsampling (균등 간격)'),
             ('spline', '🌀 Cubic Spline (부드러움)'),
+            ('only_global_bezier', '🌐 Global Bézier Only (글로벌 경로 고정)'),
             ('bezier', '🎨 Bézier (Ackermann 제약)'),
             ('local_bezier', '🚀 Local Bézier (실시간 최적화)')
         ]
