@@ -7,6 +7,16 @@ def _lerp2(p, q, t):
     return p + (q - p) * t
 
 
+def _bernstein_matrix(n: int, t_vals: np.ndarray) -> np.ndarray:
+    """Vectorized Bernstein basis matrix for degree-n Bézier evaluation."""
+
+    t = t_vals.reshape(-1, 1)
+    i = np.arange(n + 1).reshape(1, -1)
+    coeff = np.array([math.comb(n, int(k)) for k in i.ravel()], dtype=float).reshape(1, -1)
+    basis = coeff * np.power(t, i) * np.power(1.0 - t, n - i)
+    return basis
+
+
 def _de_casteljau_split(ctrl, t):
     """Split arbitrary-degree Bézier at t, returning (left, right) control points."""
 
@@ -22,11 +32,19 @@ def _de_casteljau_split(ctrl, t):
 
 
 def _bezier_eval(ctrl, t):
-    pts = np.array(ctrl, dtype=float)
-    n = len(pts) - 1
-    for _ in range(1, n + 1):
-        pts = np.array([_lerp2(pts[i], pts[i + 1], t) for i in range(len(pts) - 1)])
-    return pts[0]
+    ctrl_arr = np.asarray(ctrl, dtype=float)
+    n = len(ctrl_arr) - 1
+    basis = _bernstein_matrix(n, np.array([t], dtype=float)).reshape(-1)
+    return basis @ ctrl_arr
+
+
+def _bezier_eval_many(ctrl, t_vals: np.ndarray) -> np.ndarray:
+    """Evaluate Bézier curve at multiple t using Bernstein matrix (vectorized)."""
+
+    ctrl_arr = np.asarray(ctrl, dtype=float)
+    n = len(ctrl_arr) - 1
+    basis = _bernstein_matrix(n, np.asarray(t_vals, dtype=float))
+    return basis @ ctrl_arr
 
 
 def _bezier_flatness(ctrl):
@@ -68,18 +86,75 @@ def _segment_circle_intersect(a, b, center, r):
     return math.hypot(px - cx, py - cy) <= r + 1e-12
 
 
+def _polygon_contains_point(poly: np.ndarray, point: np.ndarray) -> bool:
+    """Check if point is inside convex polygon using cross products (ccw)."""
+
+    x, y = point
+    sign = None
+    for i in range(len(poly)):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % len(poly)]
+        cross = (x2 - x1) * (y - y1) - (y2 - y1) * (x - x1)
+        cur_sign = cross >= 0
+        if sign is None:
+            sign = cur_sign
+        elif sign != cur_sign:
+            return False
+    return True
+
+
+def _polygon_circle_overlap(poly: np.ndarray, center: np.ndarray, radius: float) -> bool:
+    """Broad-phase hull vs circle check leveraging convex hull containment."""
+
+    aabb_poly = _aabb_of_points(poly)
+    if not _aabb_overlap(aabb_poly, (center[0] - radius, center[1] - radius, center[0] + radius, center[1] + radius)):
+        return False
+
+    # If circle center inside polygon, overlap.
+    if _polygon_contains_point(poly, center):
+        return True
+
+    # Check distance from circle center to each hull edge.
+    for i in range(len(poly)):
+        a = poly[i]
+        b = poly[(i + 1) % len(poly)]
+        dist, _ = _distance_point_to_segment(center, a, b)
+        if dist <= radius:
+            return True
+    return False
+
+
 def _find_intervals_bezier_hits(ctrl, obstacles, t0=0.0, t1=1.0, flat_eps=1e-2, max_depth=26):
-    """Detect t-intervals where Bézier curve intersects inflated circular obstacles."""
+    """Detect t-intervals where Bézier curve intersects inflated circular obstacles.
+
+    Broad phase: use convex-hull containment to skip most subdivisions.
+    Narrow phase: only split when hull overlaps with at least one obstacle.
+    """
+
+    ctrl_arr = np.array(ctrl, dtype=float)
+    hull = ctrl_arr[:, :2]
+    if obstacles:
+        overlaps_any = any(
+            _polygon_circle_overlap(hull, np.array(c[0], dtype=float), float(c[1]))
+            for c in obstacles
+        )
+        if not overlaps_any:
+            return []
 
     hits = []
 
     def rec(ctrl_local, a, b, depth):
-        aabb = _aabb_of_points(ctrl_local)
-        if not any(_aabb_overlap(aabb, (c[0][0] - c[1], c[0][1] - c[1], c[0][0] + c[1], c[0][1] + c[1])) for c in obstacles):
-            return
+        hull_local = ctrl_local[:, :2]
+        # Broad-phase with convex hull; bail early if no obstacle overlaps the hull.
+        if obstacles:
+            if not any(
+                _polygon_circle_overlap(hull_local, np.array(c[0], dtype=float), float(c[1]))
+                for c in obstacles
+            ):
+                return
 
-        if (depth >= max_depth) or (_bezier_flatness(ctrl_local) <= flat_eps):
-            p0, p1 = ctrl_local[0], ctrl_local[-1]
+        if (depth >= max_depth) or (_bezier_flatness(hull_local) <= flat_eps):
+            p0, p1 = hull_local[0], hull_local[-1]
             if any(_segment_circle_intersect(p0, p1, c[0], c[1]) for c in obstacles):
                 hits.append((a, b))
             return
@@ -89,7 +164,7 @@ def _find_intervals_bezier_hits(ctrl, obstacles, t0=0.0, t1=1.0, flat_eps=1e-2, 
         rec(L, a, m, depth + 1)
         rec(R, m, b, depth + 1)
 
-    rec(np.array(ctrl, dtype=float), t0, t1, 0)
+    rec(ctrl_arr, t0, t1, 0)
     hits.sort()
 
     merged = []
@@ -168,41 +243,39 @@ def _push_away_from_obstacles(
 
 
 def _adaptive_bezier_sample(control_points, max_seg_len=0.14, min_points: int = 8):
-    """디카스텔쥬 분할을 길이 기준으로 반복해 과도한 샘플링 없이 곡선 모양을 보존."""
+    """길이 기반 적응 샘플링 (행렬 평가 사용, 재귀 제거)."""
 
-    pts = [control_points[0]]
+    ctrl = np.asarray(control_points, dtype=float)
+    if len(ctrl) < 2:
+        return ctrl
 
-    def subdiv(ctrl):
-        chord = np.linalg.norm(ctrl[-1] - ctrl[0])
-        if chord <= max_seg_len and _bezier_flatness(ctrl) <= max_seg_len * 0.5:
-            pts.append(ctrl[-1])
-            return
-        left, right = _de_casteljau_split(ctrl, 0.5)
-        subdiv(left)
-        subdiv(right)
+    # 1) 거칠게 샘플해 길이 추정
+    coarse_t = np.linspace(0.0, 1.0, num=12)
+    coarse_pts = _bezier_eval_many(ctrl, coarse_t)
+    seg_len = np.linalg.norm(np.diff(coarse_pts, axis=0), axis=1)
+    total_len = float(seg_len.sum())
 
-    subdiv(np.array(control_points, dtype=float))
-    if len(pts) < min_points:
-        t_vals = np.linspace(0.0, 1.0, min_points)
-        return np.array([_bezier_eval(control_points, t) for t in t_vals])
-    return np.array(pts)
+    n_samples = max(min_points, int(max(total_len / max_seg_len, 1)) + 1)
+
+    # 2) 호 길이 기반 파라미터 재분배
+    if n_samples <= len(coarse_t):
+        t_vals = np.linspace(0.0, 1.0, num=n_samples)
+    else:
+        cum_len = np.concatenate([[0.0], np.cumsum(seg_len)])
+        cum_len /= max(cum_len[-1], 1e-6)
+        target = np.linspace(0.0, 1.0, num=n_samples)
+        t_vals = np.interp(target, cum_len, coarse_t)
+
+    return _bezier_eval_many(ctrl, t_vals)
 
 
 def bezier_curve(control_points, num_points=50):
     """Bézier curve 생성"""
     n = len(control_points) - 1
     t_values = np.linspace(0, 1, num_points)
-    curve = np.zeros((num_points, 2))
-    
-    for i, t in enumerate(t_values):
-        point = np.zeros(2)
-        for j in range(n + 1):
-            binomial = math.comb(n, j)
-            bernstein = binomial * (t ** j) * ((1 - t) ** (n - j))
-            point += bernstein * control_points[j]
-        curve[i] = point
-    
-    return curve
+    basis = _bernstein_matrix(n, t_values)
+    ctrl = np.asarray(control_points, dtype=float)
+    return basis @ ctrl
 
 
 def _distance_point_to_segment(pt, a, b):
