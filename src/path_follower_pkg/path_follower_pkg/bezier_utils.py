@@ -105,10 +105,10 @@ def _push_away_from_obstacles(
     control_points,
     obstacles,
     flat_eps=1e-2,
-    base_step=0.04,
-    clearance=0.08,
-    gain=0.9,
-    max_passes=24,
+    base_step=0.02,
+    clearance=0.06,
+    gain=0.6,
+    max_passes=14,
 ):
     """Push mid control points (P1/P2) outward until curve clears obstacle circles.
 
@@ -162,7 +162,7 @@ def _push_away_from_obstacles(
 
         cp = np.array([p0, p1, p2, p3], dtype=float)
         if not moved:
-            base_step *= 1.2
+            base_step *= 1.1
 
     return cp
 
@@ -220,11 +220,11 @@ def _apply_constraint_offset(
     control_points,
     constraints,
     avoid_margin=0.45,
-    max_offset=1.2,
-    clearance=0.12,
-    exclusion_radius=0.8,
+    max_offset=1.0,
+    clearance=0.08,
+    exclusion_radius=0.72,
     max_iterations=4,
-    ph_offset_gain=0.4,
+    ph_offset_gain=0.35,
 ):
     """
     제약(cp)이 Bézier 구간을 덮을 때만 중간 제어점(P1, P2)만 경로 밖으로 밀어낸다.
@@ -300,7 +300,7 @@ def _apply_constraint_offset(
                 (exclusion_radius - curve_dist + clearance)
                 / max(exclusion_radius, 1e-6),
                 0.0,
-                2.5,
+                1.6,
             )
             along = np.clip(proj / (path_norm + 1e-6), 0.0, 1.0)
 
@@ -310,8 +310,8 @@ def _apply_constraint_offset(
             ph_push = path_dir * side * ph_offset_gain * exclusion_push
 
             # cp4(P3)에 닿기 전까지 지속적으로 밀어내기 위해 최소 힘을 유지
-            base_p1 = max(0.6, 1.1 - along)
-            base_p2 = max(0.6, 0.6 + along)
+            base_p1 = max(0.5, 1.0 - along)
+            base_p2 = max(0.5, 0.55 + along)
             offset_p1 += offset_dir * exclusion_push * base_p1 + ph_push
             offset_p2 += offset_dir * exclusion_push * base_p2 + ph_push
 
@@ -430,10 +430,10 @@ def split_global_to_local_bezier(global_path, robot_pos, lookahead_dist=0.5, con
                 control_points,
                 seg_obs,
                 flat_eps=8e-3,
-                base_step=0.035,
-                clearance=0.1,
-                gain=0.85,
-                max_passes=18,
+                base_step=0.022,
+                clearance=0.08,
+                gain=0.65,
+                max_passes=14,
             )
 
     # 4. ✅ Bézier curve 생성 (길이 기반 분할, 과도한 샘플링 제거)
@@ -541,10 +541,10 @@ def generate_bezier_from_waypoints(
                 control_points,
                 seg_obstacles,
                 flat_eps=8e-3,
-                base_step=0.035,
-                clearance=0.1,
-                gain=0.9,
-                max_passes=18,
+                base_step=0.022,
+                clearance=0.08,
+                gain=0.65,
+                max_passes=14,
             )
             control_points[1], control_points[2] = safe_cp[1], safe_cp[2]
 

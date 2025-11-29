@@ -137,7 +137,7 @@ class PathManager:
             if self.robot_start_pos is not None:
                 waypoints_to_use[0] = (self.robot_start_pos[0], self.robot_start_pos[1])
 
-            if self.global_obstacles and self.interpolation_method in ['bezier', 'local_bezier']:
+            if self.interpolation_method == 'local_bezier' and self.global_obstacles:
                 waypoints_to_use = self._rrt_bridge_waypoints(waypoints_to_use)
 
             if self.interpolation_method == 'none':

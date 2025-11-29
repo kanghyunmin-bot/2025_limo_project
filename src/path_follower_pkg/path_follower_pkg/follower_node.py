@@ -11,7 +11,7 @@ import time
 
 from .path_manager import PathManager
 from .path_controller import PathController
-from .stanley_controller import StanleyController
+from .stanley_controller import StanleyController, StanleyFeedforwardController
 from .math_utils import quaternion_to_yaw
 from .path_recorder import PathRecorder
 from .accuracy_utils import AccuracyCalculator
@@ -67,7 +67,8 @@ class PathFollower(Node):
         self.path_manager = PathManager(self)
         self.controllers = {
             'pure_pursuit': PathController(k_ld=0.6, k_theta=2.0, wheelbase=self.wheelbase),
-            'stanley': StanleyController(k_e=3.5, wheelbase=self.wheelbase)
+            'stanley': StanleyController(k_e=3.5, wheelbase=self.wheelbase),
+            'stanley_ff': StanleyFeedforwardController(k_e=3.5, wheelbase=self.wheelbase),
         }
         
         self.path_recorder = PathRecorder(record_interval=0.1)
@@ -219,7 +220,7 @@ class PathFollower(Node):
             self.get_logger().info(f"🔄 Path Source: {self.path_source}")
     
     def on_control_mode(self, msg: String):
-        if msg.data in ['pure_pursuit', 'stanley']:
+        if msg.data in ['pure_pursuit', 'stanley', 'stanley_ff']:
             self.control_mode = msg.data
             self.get_logger().info(f"🔄 Control: {self.control_mode}")
     
@@ -231,6 +232,9 @@ class PathFollower(Node):
     def on_interpolation_method(self, msg: String):
         self.interpolation_method = msg.data
         self.path_manager.interpolation_method = msg.data
+        if self.interpolation_method == 'local_bezier':
+            # local_bezier 모드로 전환 시 최신 코스트맵 제약을 적용하도록 표시
+            self.pending_costmap_update = True
     
     def on_velocity_params(self, msg: Twist):
         self.path_manager.v_max = msg.linear.x
@@ -251,6 +255,10 @@ class PathFollower(Node):
 
     def _maybe_refresh_costmap_constraints(self):
         if not self.pending_costmap_update:
+            return
+
+        if self.path_manager.interpolation_method != 'local_bezier':
+            self.pending_costmap_update = False
             return
 
         now = time.time()
