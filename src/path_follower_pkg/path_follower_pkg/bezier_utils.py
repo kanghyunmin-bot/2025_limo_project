@@ -183,7 +183,7 @@ def _push_away_from_obstacles(
     base_step=0.02,
     clearance=0.06,
     gain=0.6,
-    max_passes=14,
+    max_passes=5,
 ):
     """Push mid control points (P1/P2) outward until curve clears obstacle circles.
 
@@ -536,7 +536,7 @@ def generate_bezier_from_waypoints(
     tension: float = 0.28,
     obstacles=None,
     obstacle_window: float = 1.0,
-    obstacle_cap: int = 32,
+    obstacle_cap: int = 20,
 ):
     """Waypoint 기반 글로벌 Bézier 체인 생성.
 
@@ -617,7 +617,7 @@ def generate_bezier_from_waypoints(
                 base_step=0.022,
                 clearance=0.08,
                 gain=0.65,
-                max_passes=14,
+                max_passes=5,
             )
             control_points[1], control_points[2] = safe_cp[1], safe_cp[2]
 

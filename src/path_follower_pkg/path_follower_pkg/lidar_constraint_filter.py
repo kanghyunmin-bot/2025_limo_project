@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import math
-from typing import List, Sequence, Tuple
+from typing import List
 
 import numpy as np
 from sensor_msgs_py import point_cloud2
@@ -32,8 +32,8 @@ class LidarConstraintFilter:
         self.cluster_distance = cluster_distance
         self.inflate_clearance = inflate_clearance
 
-    def _filter_pointcloud(self, cloud: PointCloud2) -> List[Tuple[float, float, float, float]]:
-        pts: List[Tuple[float, float, float, float]] = []
+    def _filter_pointcloud(self, cloud: PointCloud2) -> List[np.ndarray]:
+        pts: List[np.ndarray] = []
         half_fov = self.lateral_fov * 0.5
 
         for x, y, z in point_cloud2.read_points(
@@ -50,97 +50,55 @@ class LidarConstraintFilter:
             if abs(angle) > half_fov:
                 continue
 
-            pts.append((rng, angle, x, y))
-        return pts
+            pts.append(np.array([x, y], dtype=float))
 
-    def _filter_scan(self, scan: LaserScan) -> List[Tuple[float, float, float, float]]:
-        pts: List[Tuple[float, float, float, float]] = []
-        half_fov = self.lateral_fov * 0.5
-
-        angle = scan.angle_min
-        for rng in scan.ranges:
-            if not math.isfinite(rng):
-                angle += scan.angle_increment
-                continue
-
-            if rng < self.min_range or rng > self.max_range:
-                angle += scan.angle_increment
-                continue
-
-            if abs(angle) > half_fov:
-                angle += scan.angle_increment
-                continue
-
-            x = rng * math.cos(angle)
-            y = rng * math.sin(angle)
-            pts.append((rng, angle, x, y))
-            angle += scan.angle_increment
-
-        return pts
-
-    def _cluster_by_density(self, polar_points: Sequence[Tuple[float, float, float, float]]):
-        if not polar_points:
+        if not pts:
             return []
 
-        clusters: List[List[Tuple[float, float, float, float]]] = []
-        current: List[Tuple[float, float, float, float]] = []
-        prev = None
+        arr = np.vstack(pts)
+        norms = np.linalg.norm(arr, axis=1)
+        scale = np.where(norms > 1e-6, (norms + self.inflate_clearance) / norms, 0.0)
+        inflated = arr * scale[:, None]
+        step = max(1, int(self.angle_resolution / max(abs(self.angle_resolution), 1e-6)))
+        return [pt for pt in inflated[::step][: self.max_constraints]]
 
-        ordered = sorted(polar_points, key=lambda p: p[1])
+    def _process_scan_numpy(self, scan: LaserScan) -> List[np.ndarray]:
+        ranges = np.asarray(scan.ranges, dtype=float)
+        angles = np.linspace(
+            scan.angle_min,
+            scan.angle_min + scan.angle_increment * (len(ranges) - 1),
+            num=len(ranges),
+            dtype=float,
+        )
 
-        for pt in ordered:
-            if prev is None:
-                current = [pt]
-            else:
-                _, _, prev_x, prev_y = prev
-                _, _, cur_x, cur_y = pt
-                if math.hypot(cur_x - prev_x, cur_y - prev_y) <= self.cluster_distance:
-                    current.append(pt)
-                else:
-                    clusters.append(current)
-                    current = [pt]
-            prev = pt
-
-        if current:
-            clusters.append(current)
-
-        centroids: List[Tuple[float, float, float, float]] = []
-        for cluster in clusters:
-            xs = [p[2] for p in cluster]
-            ys = [p[3] for p in cluster]
-            cx = float(np.mean(xs))
-            cy = float(np.mean(ys))
-            rng = math.hypot(cx, cy)
-            angle = math.atan2(cy, cx)
-            centroids.append((rng, angle, cx, cy))
-
-        return centroids
-
-    def _bin_and_select(self, candidates: Sequence[Tuple[float, float, float, float]]):
-        if not candidates:
+        half_fov = 0.5 * self.lateral_fov
+        mask = (
+            np.isfinite(ranges)
+            & (ranges > self.min_range)
+            & (ranges < self.max_range)
+            & (np.abs(angles) < half_fov)
+        )
+        if not np.any(mask):
             return []
 
-        bins = {}
-        half_fov = self.lateral_fov * 0.5
+        r_sel = ranges[mask]
+        a_sel = angles[mask]
+        xs = r_sel * np.cos(a_sel)
+        ys = r_sel * np.sin(a_sel)
 
-        for rng, angle, x, y in candidates:
-            bin_idx = int((angle + half_fov) // self.angle_resolution)
-            best = bins.get(bin_idx)
-            if best is None or rng < best[0]:
-                bins[bin_idx] = (rng, x, y)
+        pts = np.stack([xs, ys], axis=1)
+        step = max(1, int(math.ceil(self.angle_resolution / max(abs(scan.angle_increment), 1e-6))))
+        pts = pts[::step]
 
-        selected = sorted(bins.values(), key=lambda t: t[0])[: self.max_constraints]
-        inflated = []
-        for rng, x, y in selected:
-            norm = math.hypot(x, y)
-            if norm < 1e-6:
-                continue
+        norms = np.linalg.norm(pts, axis=1)
+        scale = np.where(norms > 1e-6, (norms - self.inflate_clearance) / norms, 0.0)
+        scale = np.clip(scale, 0.0, None)
+        inflated = pts * scale[:, None]
 
-            inflated_range = norm + self.inflate_clearance
-            scale = inflated_range / norm
-            inflated.append(np.array([x * scale, y * scale]))
+        if self.max_constraints and inflated.shape[0] > self.max_constraints:
+            inflated = inflated[: self.max_constraints]
 
-        return inflated
+        return [pt for pt in inflated]
 
     def build_constraints(self, data) -> List[np.ndarray]:
         """Polar binning으로 최근접 장애물을 cp로 선택.
@@ -150,12 +108,9 @@ class LidarConstraintFilter:
         """
 
         if isinstance(data, LaserScan):
-            polar_pts = self._filter_scan(data)
-            clustered = self._cluster_by_density(polar_pts)
-            return self._bin_and_select(clustered)
+            return self._process_scan_numpy(data)
 
         if isinstance(data, PointCloud2):
-            candidates = self._filter_pointcloud(data)
-            return self._bin_and_select(candidates)
+            return self._filter_pointcloud(data)
 
         return []

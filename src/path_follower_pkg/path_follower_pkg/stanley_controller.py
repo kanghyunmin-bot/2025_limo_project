@@ -1,17 +1,9 @@
 #!/usr/bin/env python3
 import math
+
 import numpy as np
 
-
-def quaternion_to_yaw(q):
-    return 2.0 * math.atan2(q.z, q.w)
-
-def normalize_angle(angle):
-    while angle > math.pi:
-        angle -= 2 * math.pi
-    while angle < -math.pi:
-        angle += 2 * math.pi
-    return angle
+from .path_utils import find_nearest_point_on_path, normalize_angle, quaternion_to_yaw
 
 
 class StanleyController:
@@ -27,12 +19,15 @@ class StanleyController:
         
         robot_x, robot_y, robot_yaw = robot_pose
         
-        if not self.initialized:
-            nearest_idx = self._find_nearest_global(robot_x, robot_y, path_points)
-            self.initialized = True
-        else:
-            nearest_idx = self._find_nearest_local(robot_x, robot_y, path_points)
-        
+        robot_pos = [robot_x, robot_y]
+        nearest_idx, _ = find_nearest_point_on_path(
+            robot_pos,
+            robot_yaw,
+            path_points,
+            last_idx=self.last_nearest_idx,
+            window_size=50,
+        )
+        self.initialized = True
         self.last_nearest_idx = nearest_idx
         
         target = path_points[nearest_idx]
@@ -44,7 +39,7 @@ class StanleyController:
         
         dx = tx - robot_x
         dy = ty - robot_y
-        cross_track_error = -math.sin(tyaw) * dx + math.cos(tyaw) * dy
+        cross_track_error = math.cos(tyaw) * dy - math.sin(tyaw) * dx
         
         drive_mode = getattr(node, 'drive_mode', 'differential')
         
@@ -87,39 +82,6 @@ class StanleyController:
         
         return linear_v, angular_z, steering
     
-    def _find_nearest_global(self, rx, ry, path_points):
-        min_dist = float('inf')
-        nearest = 0
-        
-        for i in range(len(path_points)):
-            px = path_points[i].pose.position.x
-            py = path_points[i].pose.position.y
-            dist = math.hypot(px - rx, py - ry)
-            
-            if dist < min_dist:
-                min_dist = dist
-                nearest = i
-        
-        return nearest
-    
-    def _find_nearest_local(self, rx, ry, path_points):
-        min_dist = float('inf')
-        nearest = self.last_nearest_idx
-        
-        start = max(0, self.last_nearest_idx - 5)
-        end = min(len(path_points), self.last_nearest_idx + 40)
-        
-        for i in range(start, end):
-            px = path_points[i].pose.position.x
-            py = path_points[i].pose.position.y
-            dist = math.hypot(px - rx, py - ry)
-            
-            if dist < min_dist:
-                min_dist = dist
-                nearest = i
-        
-        return nearest
-    
     def reset(self):
         self.last_nearest_idx = 0
         self.initialized = False
@@ -160,12 +122,15 @@ class StanleyFeedforwardController(StanleyController):
 
         robot_x, robot_y, robot_yaw = robot_pose
 
-        if not self.initialized:
-            nearest_idx = self._find_nearest_global(robot_x, robot_y, path_points)
-            self.initialized = True
-        else:
-            nearest_idx = self._find_nearest_local(robot_x, robot_y, path_points)
-
+        robot_pos = [robot_x, robot_y]
+        nearest_idx, _ = find_nearest_point_on_path(
+            robot_pos,
+            robot_yaw,
+            path_points,
+            last_idx=self.last_nearest_idx,
+            window_size=50,
+        )
+        self.initialized = True
         self.last_nearest_idx = nearest_idx
 
         target = path_points[nearest_idx]
@@ -177,7 +142,7 @@ class StanleyFeedforwardController(StanleyController):
 
         dx = tx - robot_x
         dy = ty - robot_y
-        cross_track_error = -math.sin(tyaw) * dx + math.cos(tyaw) * dy
+        cross_track_error = math.cos(tyaw) * dy - math.sin(tyaw) * dx
 
         curvature_ff = self._estimate_curvature(path_points, nearest_idx)
         delta_ff = math.atan(self.wheelbase * curvature_ff)

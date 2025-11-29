@@ -22,9 +22,9 @@ class CostmapConstraintFilter:
         inflate_margin: float = 0.35,
         robot_radius: float = 0.20,
         safety_margin: float = 0.05,
-        stride: int = 2,
+        stride: int = 4,
         max_constraints: int = 60,
-        path_stride: int = 3,
+        path_stride: int = 5,
     ):
         self.cost_threshold = cost_threshold
         self.search_radius = search_radius
@@ -174,13 +174,20 @@ class CostmapConstraintFilter:
         if path_pts.size == 0:
             return []
 
-        constraints: List[np.ndarray] = []
-        for pt in world_pts:
-            dist = self._polyline_min_distance(pt, path_pts)
-            if dist > self.path_window:
-                continue
-            nearest_idx = int(np.argmin(np.linalg.norm(path_pts - pt, axis=1)))
-            inflated = self._inflate_toward_path(pt, path_pts[nearest_idx])
+        obs = world_pts
+        path = path_pts
+        diff = obs[:, None, :] - path[None, :, :]
+        dist_sq = np.sum(diff * diff, axis=2)
+        min_dists = np.min(dist_sq, axis=1)
+        keep = min_dists <= (self.path_window * self.path_window)
+        if not np.any(keep):
+            return []
+
+        nearest_idx = np.argmin(dist_sq[keep], axis=1)
+        selected_obs = obs[keep]
+        constraints = []
+        for pt, idx in zip(selected_obs, nearest_idx):
+            inflated = self._inflate_toward_path(pt, path[idx])
             constraints.append(inflated)
             if len(constraints) >= self.max_constraints:
                 break
@@ -217,7 +224,6 @@ class CostmapConstraintFilter:
         if path_pts.size == 0:
             return []
 
-        # 경로 주변만 남기기 위해 AABB + 여유를 적용해 포인트 수를 줄인다.
         pad = self.path_window + 0.2
         min_xy = np.min(path_pts, axis=0) - pad
         max_xy = np.max(path_pts, axis=0) + pad
@@ -231,13 +237,21 @@ class CostmapConstraintFilter:
             return []
         world_pts = world_pts[within]
 
+        obs = world_pts
+        path = path_pts
+        diff = obs[:, None, :] - path[None, :, :]
+        dist_sq = np.sum(diff * diff, axis=2)
+        min_dists = np.min(dist_sq, axis=1)
+        keep = min_dists <= (self.path_window * self.path_window)
+        if not np.any(keep):
+            return []
+
+        nearest_idx = np.argmin(dist_sq[keep], axis=1)
+        selected_obs = obs[keep]
+
         constraints: List[np.ndarray] = []
-        for pt in world_pts:
-            dist = self._polyline_min_distance(pt, path_pts)
-            if dist > self.path_window:
-                continue
-            nearest_idx = int(np.argmin(np.linalg.norm(path_pts - pt, axis=1)))
-            inflated = self._inflate_toward_path(pt, path_pts[nearest_idx])
+        for pt, idx in zip(selected_obs, nearest_idx):
+            inflated = self._inflate_toward_path(pt, path[idx])
             constraints.append(inflated)
             if len(constraints) >= self.max_constraints:
                 break
