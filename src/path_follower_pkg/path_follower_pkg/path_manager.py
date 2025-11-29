@@ -36,6 +36,8 @@ class PathManager:
         self.global_obstacles = []
         self.global_obstacle_window = 1.0
         self.global_obstacle_cap = 32
+        self.freeze_global_path = True
+        self._path_dirty = True
 
         self.ackermann_planner = AckermannPathPlanner()
         self.rrt_planner = RRTPlanner()
@@ -64,6 +66,7 @@ class PathManager:
     def on_interpolation_method_change(self, msg: String):
         self.interpolation_method = msg.data
         self.node.get_logger().info(f"🛣️ Interpolation: {msg.data}")
+        self._path_dirty = True
         if len(self.waypoints) >= 2:
             self._update_path()
     
@@ -72,18 +75,21 @@ class PathManager:
             old_mode = self.drive_mode
             self.drive_mode = msg.data
             self.node.get_logger().info(f"🔄 PathManager: {old_mode} → {self.drive_mode}")
-            
+            self._path_dirty = True
+
             if len(self.waypoints) >= 2:
                 self._update_path()
     
     def on_use_ackermann_path(self, msg: Bool):
         self.use_ackermann_path = msg.data
+        self._path_dirty = True
         if len(self.waypoints) >= 2:
             self._update_path()
 
     def add_waypoint(self, msg: PointStamped):
         self.waypoints.append((msg.point.x, msg.point.y))
         self.node.get_logger().info(f"📍 Waypoint {len(self.waypoints)}")
+        self._path_dirty = True
         if len(self.waypoints) >= 2:
             self._update_path()
 
@@ -91,6 +97,7 @@ class PathManager:
         if len(path_msg.poses) < 2:
             return
         self.waypoints = [(p.pose.position.x, p.pose.position.y) for p in path_msg.poses]
+        self._path_dirty = True
         self._update_path()
     
     def _compute_path_orientations(self, points):
@@ -130,8 +137,13 @@ class PathManager:
         if len(self.waypoints) < 2:
             return
 
+        if self.freeze_global_path and self.global_path is not None and not self._path_dirty:
+            # 이미 확정된 글로벌 경로를 유지하고, 필요 시에만 로컬만 갱신
+            self.local_path = self.global_path
+            return
+
         try:
-            ds = 0.08
+            ds = 0.16 if self.interpolation_method != 'local_bezier' else 0.08
 
             waypoints_to_use = self.waypoints.copy()
             if self.robot_start_pos is not None:
@@ -197,6 +209,7 @@ class PathManager:
                 )
             
             self.local_path = self.global_path
+            self._path_dirty = False
 
         except Exception as e:
             self.node.get_logger().error(f"❌ {e}")
@@ -324,6 +337,7 @@ class PathManager:
     def create_initial_path(self, robot_pos):
         try:
             self.robot_start_pos = robot_pos
+            self._path_dirty = True
             self.waypoints = [
                 (robot_pos[0], robot_pos[1]),
                 (robot_pos[0] + 1.0, robot_pos[1])
@@ -336,6 +350,7 @@ class PathManager:
     
     def set_robot_start(self, robot_pos):
         self.robot_start_pos = robot_pos
+        self._path_dirty = True
 
     def update_constraint_points(self, constraint_points):
         self.constraint_points = constraint_points
@@ -345,11 +360,13 @@ class PathManager:
         if window is not None:
             self.global_constraint_window = float(window)
         if replan and len(self.waypoints) >= 2:
+            self._path_dirty = True
             self._update_path()
 
     def update_global_obstacles(self, obstacles, replan: bool = False):
         self.global_obstacles = obstacles or []
         if replan and len(self.waypoints) >= 2:
+            self._path_dirty = True
             self._update_path()
 
     def nearest_constraint_distance(self, robot_pos):
@@ -380,3 +397,4 @@ class PathManager:
         self.constraint_points.clear()
         self.global_constraints.clear()
         self.global_obstacles.clear()
+        self._path_dirty = True
