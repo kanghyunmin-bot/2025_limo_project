@@ -20,7 +20,7 @@ class LidarConstraintFilter:
         angle_resolution: float = math.radians(10.0),
         max_constraints: int = 20,
         cluster_distance: float = 0.3,
-        inflate_clearance: float = 0.35,
+        inflate_clearance: float = 0.33,
     ):
         self.min_range = min_range
         self.max_range = max_range

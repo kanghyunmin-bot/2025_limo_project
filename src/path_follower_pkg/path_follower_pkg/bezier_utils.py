@@ -295,7 +295,7 @@ def _apply_constraint_offset(
     avoid_margin=0.45,
     max_offset=1.0,
     clearance=0.08,
-    exclusion_radius=0.72,
+    exclusion_radius=0.33,
     max_iterations=4,
     ph_offset_gain=0.35,
 ):
@@ -397,7 +397,7 @@ def _apply_constraint_offset(
     return cp_array
 
 
-def _constraints_to_obstacles(constraints, radius=0.7):
+def _constraints_to_obstacles(constraints, radius=0.33):
     """Point 제약을 원형 장애물로 취급해 하나의 처리 루틴으로 통합한다."""
 
     if not constraints:
@@ -493,7 +493,7 @@ def split_global_to_local_bezier(global_path, robot_pos, lookahead_dist=0.5, con
     control_points = np.array([P0, P1, P2, P3])
 
     # ✅ 동적 장애물 cp를 원형으로 가정해 필요할 때만 밀어낸다.
-    constraint_obs = _constraints_to_obstacles(constraints or [], radius=0.75)
+    constraint_obs = _constraints_to_obstacles(constraints or [], radius=0.33)
     if constraint_obs:
         seg_obs = _filter_obstacles_for_segment(
             constraint_obs, P0, P3, window=0.9, cap=18
@@ -564,7 +564,7 @@ def generate_bezier_from_waypoints(
     all_curves = []
     constraint_arr = [np.array(c) for c in (constraints or [])]
     constraint_obs = _constraints_to_obstacles(
-        constraint_arr, radius=max(constraint_window, 0.65)
+        constraint_arr, radius=max(constraint_window, 0.33)
     )
     obstacle_arr = []
     for obs in obstacles or []:

@@ -36,7 +36,7 @@ class PathFollower(Node):
         self.declare_parameter('global_cost_threshold', 50)
         self.declare_parameter('global_costmap_search_radius', 3.0)
         self.declare_parameter('global_costmap_path_window', 0.8)
-        self.declare_parameter('global_costmap_inflate_margin', 0.35)
+        self.declare_parameter('global_costmap_inflate_margin', 0.33)
         self.declare_parameter('global_costmap_robot_radius', 0.20)
         self.declare_parameter('global_costmap_safety_margin', 0.05)
         self.declare_parameter('global_costmap_stride', 2)

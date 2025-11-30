@@ -19,7 +19,7 @@ class CostmapConstraintFilter:
         cost_threshold: int = 50,
         search_radius: float = 3.0,
         path_window: float = 0.8,
-        inflate_margin: float = 0.35,
+        inflate_margin: float = 0.33,
         robot_radius: float = 0.20,
         safety_margin: float = 0.05,
         stride: int = 4,
