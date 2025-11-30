@@ -19,6 +19,8 @@ class ControlPanelNode(Node):
         self.pub_velocity_params = self.create_publisher(Twist, '/path_follower/velocity_params', 10)
         self.pub_use_ackermann_path = self.create_publisher(Bool, '/path_follower/use_ackermann_path', 10)
         self.pub_interpolation_method = self.create_publisher(String, '/path_follower/interpolation_method', 10)
+        self.pub_local_constraint_radius = self.create_publisher(Float32, '/path_follower/local_constraint_radius', 10)
+        self.pub_global_constraint_radius = self.create_publisher(Float32, '/path_follower/global_constraint_radius', 10)
         
         # Subscribers
         self.sub_path = self.create_subscription(Path, '/path_odom', self.on_path, 10)

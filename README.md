@@ -166,6 +166,7 @@ source install/setup.bash
 - ✅ **Planner Path** 연동
 - ✅ **곡률 기반 속도 제어**
 - ✅ **실시간 GUI 제어**
+  - GUI에서 Local/Global Bézier 제약 반경을 직접 입력해 즉시 반영
 
 ---
 

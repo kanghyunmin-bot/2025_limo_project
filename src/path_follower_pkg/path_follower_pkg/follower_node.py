@@ -43,6 +43,7 @@ class PathFollower(Node):
         self.declare_parameter('global_costmap_max_constraints', 60)
         self.declare_parameter('global_costmap_path_stride', 3)
         self.declare_parameter('global_costmap_replan_interval', 0.8)
+        self.declare_parameter('local_constraint_inflate_clearance', 0.33)
         
         # ✅ 주기 설정
         self.declare_parameter('controller_frequency', 60.0)  # 제어 주기
@@ -62,6 +63,8 @@ class PathFollower(Node):
         self.enable_dynamic_avoidance = self.get_parameter('enable_dynamic_avoidance').value
         self.global_costmap_topic = self.get_parameter('global_costmap_topic').value
         self.costmap_replan_interval = float(self.get_parameter('global_costmap_replan_interval').value)
+        self.local_constraint_radius = float(self.get_parameter('local_constraint_inflate_clearance').value)
+        self.global_constraint_radius = float(self.get_parameter('global_costmap_inflate_margin').value)
 
         # Components
         self.path_manager = PathManager(self)
@@ -73,12 +76,12 @@ class PathFollower(Node):
         
         self.path_recorder = PathRecorder(record_interval=0.1)
         self.accuracy_calculator = AccuracyCalculator()
-        self.constraint_filter = LidarConstraintFilter()
+        self.constraint_filter = LidarConstraintFilter(inflate_clearance=self.local_constraint_radius)
         self.costmap_filter = CostmapConstraintFilter(
             cost_threshold=int(self.get_parameter('global_cost_threshold').value),
             search_radius=float(self.get_parameter('global_costmap_search_radius').value),
             path_window=float(self.get_parameter('global_costmap_path_window').value),
-            inflate_margin=float(self.get_parameter('global_costmap_inflate_margin').value),
+            inflate_margin=self.global_constraint_radius,
             robot_radius=float(self.get_parameter('global_costmap_robot_radius').value),
             safety_margin=float(self.get_parameter('global_costmap_safety_margin').value),
             stride=int(self.get_parameter('global_costmap_stride').value),
@@ -152,6 +155,8 @@ class PathFollower(Node):
         self.sub_drive_mode = self.create_subscription(String, '/path_follower/drive_mode', self.on_drive_mode, 10)
         self.sub_interpolation_method = self.create_subscription(String, '/path_follower/interpolation_method', self.on_interpolation_method, 10)
         self.sub_velocity_params = self.create_subscription(Twist, '/path_follower/velocity_params', self.on_velocity_params, 10)
+        self.sub_local_radius = self.create_subscription(Float32, '/path_follower/local_constraint_radius', self.on_local_radius, 10)
+        self.sub_global_radius = self.create_subscription(Float32, '/path_follower/global_constraint_radius', self.on_global_radius, 10)
     
     def on_odom(self, msg: Odometry):
         self.robot_pose[0] = msg.pose.pose.position.x
@@ -253,6 +258,22 @@ class PathFollower(Node):
         combined.extend(self.lidar_constraints)
         self.path_manager.update_constraint_points(combined)
 
+    def on_local_radius(self, msg: Float32):
+        val = max(0.0, float(msg.data))
+        self.local_constraint_radius = val
+        self.constraint_filter.inflate_clearance = val
+        self.path_manager.local_constraint_window = val
+        self.get_logger().info(f"📏 Local constraint radius set to {val:.2f} m")
+
+    def on_global_radius(self, msg: Float32):
+        val = max(0.0, float(msg.data))
+        self.global_constraint_radius = val
+        self.costmap_filter.inflate_margin = val
+        self.path_manager.global_constraint_window = max(val, 0.0)
+        self.path_manager.global_obstacle_window = float(self.get_parameter('global_costmap_path_window').value) + val
+        self.pending_costmap_update = True
+        self.get_logger().info(f"🌐 Global constraint radius set to {val:.2f} m (costmap)")
+
     def _maybe_refresh_costmap_constraints(self):
         if not self.pending_costmap_update:
             return
@@ -285,7 +306,7 @@ class PathFollower(Node):
         self.costmap_obstacles = self.costmap_filter.build_obstacle_circles()
         self.path_manager.global_obstacle_window = float(
             self.get_parameter('global_costmap_path_window').value
-        ) + float(self.get_parameter('global_costmap_inflate_margin').value)
+        ) + self.global_constraint_radius
         self.path_manager.global_obstacle_cap = int(
             self.get_parameter('global_costmap_max_constraints').value
         )

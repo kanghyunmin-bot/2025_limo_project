@@ -443,7 +443,7 @@ def _prefilter_obstacles_by_bbox(obstacles, bbox_min, bbox_max, pad: float = 1.0
     return filt
 
 
-def split_global_to_local_bezier(global_path, robot_pos, lookahead_dist=0.5, constraints=None):
+def split_global_to_local_bezier(global_path, robot_pos, lookahead_dist=0.5, constraints=None, constraint_window: float = 0.33):
     """
     ✅ 개선된 Local Bézier: shortcut 방지 + 제약점 기반 경로 틀기
     """
@@ -493,18 +493,21 @@ def split_global_to_local_bezier(global_path, robot_pos, lookahead_dist=0.5, con
     control_points = np.array([P0, P1, P2, P3])
 
     # ✅ 동적 장애물 cp를 원형으로 가정해 필요할 때만 밀어낸다.
-    constraint_obs = _constraints_to_obstacles(constraints or [], radius=0.33)
+    radius = max(constraint_window, 0.05)
+    constraint_obs = _constraints_to_obstacles(constraints or [], radius=radius)
     if constraint_obs:
+        seg_window = max(radius * 2.0, 0.9)
         seg_obs = _filter_obstacles_for_segment(
-            constraint_obs, P0, P3, window=0.9, cap=18
+            constraint_obs, P0, P3, window=seg_window, cap=18
         )
         if seg_obs:
+            clearance = max(0.08, radius * 0.25)
             control_points = _push_away_from_obstacles(
                 control_points,
                 seg_obs,
                 flat_eps=8e-3,
                 base_step=0.022,
-                clearance=0.08,
+                clearance=clearance,
                 gain=0.65,
                 max_passes=14,
             )

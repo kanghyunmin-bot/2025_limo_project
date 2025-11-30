@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from std_msgs.msg import Empty, String, Bool
+from std_msgs.msg import Empty, String, Bool, Float32
 from geometry_msgs.msg import Twist
 
 class EventHandlers:
@@ -22,6 +22,32 @@ class EventHandlers:
             self.node.set_accuracy_callback(self.on_accuracy_update)
         except:
             pass
+
+    def set_constraint_radius(self, scope: str):
+        """로컬/글로벌 베지어 제약 반경 입력 처리"""
+        try:
+            if 'constraint_radius' not in self.widgets:
+                return
+
+            if scope == 'local':
+                raw = self.widgets['constraint_radius'].entry_local.get()
+                val = float(raw)
+                msg = Float32()
+                msg.data = val
+                self.node.pub_local_constraint_radius.publish(msg)
+                self.widgets['constraint_radius'].status.config(text=f"Local radius → {val:.2f} m", foreground="green")
+            elif scope == 'global':
+                raw = self.widgets['constraint_radius'].entry_global.get()
+                val = float(raw)
+                msg = Float32()
+                msg.data = val
+                self.node.pub_global_constraint_radius.publish(msg)
+                self.widgets['constraint_radius'].status.config(text=f"Global radius → {val:.2f} m", foreground="blue")
+        except Exception as e:
+            try:
+                self.widgets['constraint_radius'].status.config(text=f"입력 오류: {e}", foreground="red")
+            except:
+                pass
     
     def on_accuracy_update(self, accuracy):
         """✅ 정확도 업데이트"""

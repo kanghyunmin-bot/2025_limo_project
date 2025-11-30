@@ -33,6 +33,7 @@ class PathManager:
         self.constraint_points = []
         self.global_constraints = []
         self.global_constraint_window = 0.8
+        self.local_constraint_window = 0.33
         self.global_obstacles = []
         self.global_obstacle_window = 1.0
         self.global_obstacle_cap = 32
@@ -293,6 +294,7 @@ class PathManager:
                 robot_pos,
                 lookahead_dist=lookahead,
                 constraints=self.constraint_points,
+                constraint_window=self.local_constraint_window,
             )
             
             if local_bezier_points is None or len(local_bezier_points) < 2:

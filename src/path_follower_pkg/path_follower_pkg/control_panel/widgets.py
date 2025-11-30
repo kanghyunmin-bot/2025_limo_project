@@ -280,3 +280,31 @@ class StatusFrame:
     
     def pack(self, **kwargs):
         self.frame.pack(**kwargs)
+
+
+class ConstraintRadiusFrame:
+    """로컬/글로벌 베지어 제약 반경 입력"""
+
+    def __init__(self, parent, handler):
+        self.frame = ttk.LabelFrame(parent, text="Constraint Radius (m)", padding=10)
+        self.handler = handler
+
+        ttk.Label(self.frame, text="Local (LiDAR cp)").grid(row=0, column=0, sticky=tk.W, padx=5, pady=3)
+        self.entry_local = ttk.Entry(self.frame, width=8)
+        self.entry_local.insert(0, "0.33")
+        self.entry_local.grid(row=0, column=1, padx=5, pady=3)
+        ttk.Button(self.frame, text="Set", command=lambda: handler.set_constraint_radius('local')).grid(row=0, column=2, padx=5, pady=3)
+
+        ttk.Label(self.frame, text="Global (Costmap)").grid(row=1, column=0, sticky=tk.W, padx=5, pady=3)
+        self.entry_global = ttk.Entry(self.frame, width=8)
+        self.entry_global.insert(0, "0.33")
+        self.entry_global.grid(row=1, column=1, padx=5, pady=3)
+        ttk.Button(self.frame, text="Set", command=lambda: handler.set_constraint_radius('global')).grid(row=1, column=2, padx=5, pady=3)
+
+        self.status = ttk.Label(self.frame, text="Local/Global 반경을 직접 입력 후 Set", foreground="gray")
+        self.status.grid(row=2, column=0, columnspan=3, sticky=tk.W, padx=5, pady=5)
+
+        self.frame.columnconfigure(1, weight=1)
+
+    def pack(self, **kwargs):
+        self.frame.pack(**kwargs)
