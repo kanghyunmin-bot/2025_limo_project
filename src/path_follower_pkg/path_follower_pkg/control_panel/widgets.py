@@ -324,6 +324,12 @@ class PlannerModeFrame:
         self.handler = handler
 
         self.var = tk.StringVar(value='astar')
+        ttk.Label(
+            self.frame,
+            text="전역 플래너 선택 (GUI에서 바로 적용)",
+            foreground='gray'
+        ).grid(row=0, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(0, 6))
+        row = 1
         options = [
             ('rrt', 'RRT (무작위 샘플)'),
             ('astar', 'A* (휴리스틱 최단)'),
@@ -335,10 +341,10 @@ class PlannerModeFrame:
                 self.frame, text=label, value=key, variable=self.var,
                 command=lambda m=key: handler.set_planner_mode(m)
             )
-            rb.grid(row=i, column=0, sticky=tk.W, padx=5, pady=2)
+            rb.grid(row=row + i, column=0, sticky=tk.W, padx=5, pady=2)
 
         self.label = ttk.Label(self.frame, text="현재: ASTAR", foreground="blue")
-        self.label.grid(row=0, column=1, rowspan=len(options), padx=10, sticky=tk.N)
+        self.label.grid(row=row, column=1, rowspan=len(options), padx=10, sticky=tk.N)
 
     def pack(self, **kwargs):
         self.frame.pack(**kwargs)

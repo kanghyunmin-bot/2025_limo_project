@@ -34,21 +34,21 @@ class ControlPanelGUI:
         
         self.widgets['interpolation'] = PathInterpolationFrame(main_frame, self.handlers)
         self.widgets['interpolation'].pack(fill=tk.X, pady=5)
-        
+
         self.widgets['path_source'] = PathSourceFrame(main_frame, self.handlers)
         self.widgets['path_source'].pack(fill=tk.X, pady=5)
-        
+
+        self.widgets['planner_mode'] = PlannerModeFrame(main_frame, self.handlers)
+        self.widgets['planner_mode'].pack(fill=tk.X, pady=5)
+
         self.widgets['driving_mode'] = DrivingModeFrame(main_frame, self.handlers)
         self.widgets['driving_mode'].pack(fill=tk.X, pady=5)
-        
+
         self.widgets['control_buttons'] = ControlButtonsFrame(main_frame, self.handlers)
         self.widgets['control_buttons'].pack(fill=tk.X, pady=5)
 
         self.widgets['constraint_radius'] = ConstraintRadiusFrame(main_frame, self.handlers)
         self.widgets['constraint_radius'].pack(fill=tk.X, pady=5)
-
-        self.widgets['planner_mode'] = PlannerModeFrame(main_frame, self.handlers)
-        self.widgets['planner_mode'].pack(fill=tk.X, pady=5)
 
         self.widgets['velocity'] = VelocityFrame(main_frame, self.handlers)
         self.widgets['velocity'].pack(fill=tk.X, pady=5)

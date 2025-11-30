@@ -14,6 +14,7 @@ class EventHandlers:
         self.path_source = 'clicked_point'
         self.use_ackermann_path = False
         self.interpolation_method = 'spline'
+        self.planner_mode = 'astar'
         self.manual_mode = False
         self.keys_pressed = {}
         
@@ -60,12 +61,23 @@ class EventHandlers:
 
     def set_planner_mode(self, mode: str):
         """글로벌 플래너 선택 (RRT / A* / Dijkstra / APF)"""
+        self.planner_mode = mode
         msg = String()
         msg.data = mode
         self.node.pub_planner_mode.publish(msg)
+
+        names = {
+            'rrt': 'RRT',
+            'astar': 'A*',
+            'dijkstra': 'Dijkstra',
+            'apf': 'APF',
+        }
         try:
             if 'planner_mode' in self.widgets:
-                self.widgets['planner_mode'].label.config(text=f"현재: {mode.upper()}")
+                self.widgets['planner_mode'].label.config(
+                    text=f"현재: {names.get(mode, mode).upper()}"
+                )
+            self.update_status()
         except:
             pass
     
@@ -309,9 +321,17 @@ class EventHandlers:
                 'local_bezier': 'LocalBez'
             }
             interp_str = interp_short.get(self.interpolation_method, self.interpolation_method)
-            
+
+            planner_short = {
+                'rrt': 'RRT',
+                'astar': 'A*',
+                'dijkstra': 'Dijk',
+                'apf': 'APF',
+            }
+            planner_str = planner_short.get(self.planner_mode, self.planner_mode)
+
             self.widgets['status'].label.config(
-                text=f"Ready | {mode_str} | {control_str} | {drive_type_str} | {interp_str}"
+                text=f"Ready | {mode_str} | {control_str} | {drive_type_str} | {interp_str} | {planner_str}"
             )
         except:
             pass
