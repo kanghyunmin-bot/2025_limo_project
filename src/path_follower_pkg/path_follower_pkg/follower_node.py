@@ -283,6 +283,8 @@ class PathFollower(Node):
         val = max(0.0, float(msg.data))
         self.global_constraint_clearance = val
         self.costmap_filter.avoid_clearance = val
+        # clearance를 창 폭에도 바로 반영해 GUI 입력값이 경로-코스트맵 간 거리 판단에 즉시 적용되도록 한다.
+        self.costmap_filter.path_window = val
         self._sync_costmap_windows()
         self.pending_costmap_update = True
         self.get_logger().info(f"🌐 Global clearance set to {val:.2f} m")
@@ -295,9 +297,9 @@ class PathFollower(Node):
 
     def _sync_costmap_windows(self):
         margin = max(self.global_constraint_clearance, self.global_constraint_radius, 0.0)
-        self.costmap_filter.path_window = max(self.get_parameter('global_costmap_path_window').value, 0.0)
-        self.path_manager.global_constraint_window = self.costmap_filter.path_window + margin
-        self.path_manager.global_obstacle_window = self.costmap_filter.path_window + margin
+        window = self.costmap_filter.path_window
+        self.path_manager.global_constraint_window = window + margin
+        self.path_manager.global_obstacle_window = window + margin
 
     def _maybe_refresh_costmap_constraints(self):
         if not self.pending_costmap_update:
@@ -337,7 +339,7 @@ class PathFollower(Node):
         self._update_combined_constraints()
         self.path_manager.update_global_constraints(
             self.costmap_constraints_global,
-            window=float(self.get_parameter('global_costmap_path_window').value),
+            window=float(self.costmap_filter.path_window),
             replan=True,
         )
         self.path_manager.update_global_obstacles(self.costmap_obstacles, replan=True)

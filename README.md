@@ -173,6 +173,7 @@ source install/setup.bash
 - ✅ **곡률 기반 속도 제어**
 - ✅ **실시간 GUI 제어**
   - GUI에서 Local/Global Bézier 제약 반경과 **Costmap 회피 거리(글로벌 Clearance)** 를 숫자로 입력해 즉시 반영
+  - 입력한 글로벌 Clearance 값이 코스트맵 거리창에도 적용되어, 경로와 겹치지 않을 때는 불필요한 재계산 없이 안정적으로 유지
   - 글로벌/로컬 베지어 외에도 **RRT / A* / Dijkstra / APF(인공 잠재장)** 전역 플래너 모드를 GUI에서 선택 가능
 
 ---
