@@ -7,6 +7,7 @@ from std_msgs.msg import Bool, String
 
 from .spline_utils import compute_path_curvature, generate_smooth_path
 from .ackermann_path_planner import AckermannPathPlanner
+from .apf_planner import APFPlanner
 from .rrt_planner import RRTPlanner
 
 # ✅ 조건부 import
@@ -42,6 +43,7 @@ class PathManager:
 
         self.ackermann_planner = AckermannPathPlanner()
         self.rrt_planner = RRTPlanner()
+        self.apf_planner = APFPlanner()
         self.interpolation_method = 'spline'
         self.drive_mode = 'differential'
         self.use_ackermann_path = False
@@ -153,6 +155,8 @@ class PathManager:
 
             if self.planner_mode == 'rrt' and self.global_obstacles:
                 waypoints_to_use = self._rrt_bridge_waypoints(waypoints_to_use)
+            elif self.planner_mode == 'apf' and self.global_obstacles:
+                waypoints_to_use = self._apf_bridge_waypoints(waypoints_to_use)
 
             if self.interpolation_method == 'none':
                 smooth_points = np.array(waypoints_to_use)
@@ -269,6 +273,35 @@ class PathManager:
                 continue
             # 첫 점은 이미 planned[-1]에 있으므로 제외
             for pt in rrt_path[1:]:
+                planned.append(pt)
+
+        return [(float(p[0]), float(p[1])) for p in planned]
+
+    def _apf_bridge_waypoints(self, waypoints):
+        """Connect waypoints with a short APF polyline around nearby obstacles."""
+
+        if len(waypoints) < 2:
+            return waypoints
+
+        planned: list[np.ndarray] = [np.array(waypoints[0], dtype=float)]
+        for i in range(len(waypoints) - 1):
+            start = planned[-1]
+            goal = np.array(waypoints[i + 1], dtype=float)
+
+            seg_mid = 0.5 * (start + goal)
+            seg_len = np.linalg.norm(goal - start) + 1e-6
+            seg_obs = [
+                (c, r)
+                for (c, r) in self.global_obstacles
+                if np.linalg.norm(c - seg_mid) <= seg_len + self.global_obstacle_window
+            ]
+
+            path = self.apf_planner.plan(start, goal, seg_obs)
+            if not path:
+                planned.append(goal)
+                continue
+
+            for pt in path[1:]:
                 planned.append(pt)
 
         return [(float(p[0]), float(p[1])) for p in planned]

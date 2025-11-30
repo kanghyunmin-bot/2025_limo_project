@@ -59,7 +59,7 @@ class EventHandlers:
                 pass
 
     def set_planner_mode(self, mode: str):
-        """글로벌 플래너 선택 (RRT / A* / Dijkstra)"""
+        """글로벌 플래너 선택 (RRT / A* / Dijkstra / APF)"""
         msg = String()
         msg.data = mode
         self.node.pub_planner_mode.publish(msg)

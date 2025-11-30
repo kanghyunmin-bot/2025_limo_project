@@ -327,7 +327,8 @@ class PlannerModeFrame:
         options = [
             ('rrt', 'RRT (무작위 샘플)'),
             ('astar', 'A* (휴리스틱 최단)'),
-            ('dijkstra', 'Dijkstra (균일 비용)')
+            ('dijkstra', 'Dijkstra (균일 비용)'),
+            ('apf', 'APF (잠재장)')
         ]
         for i, (key, label) in enumerate(options):
             rb = ttk.Radiobutton(
