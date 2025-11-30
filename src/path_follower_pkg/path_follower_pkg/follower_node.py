@@ -269,8 +269,10 @@ class PathFollower(Node):
         val = max(0.0, float(msg.data))
         self.global_constraint_radius = val
         self.costmap_filter.inflate_margin = val
+        # GUI 입력 반경을 코스트맵 제약 거리창에도 반영해, 입력값이 바로 민감도에 적용되도록 한다
+        self.costmap_filter.path_window = max(val, 0.05)
         self.path_manager.global_constraint_window = max(val, 0.0)
-        self.path_manager.global_obstacle_window = float(self.get_parameter('global_costmap_path_window').value) + val
+        self.path_manager.global_obstacle_window = self.costmap_filter.path_window + val
         self.pending_costmap_update = True
         self.get_logger().info(f"🌐 Global constraint radius set to {val:.2f} m (costmap)")
 
@@ -304,9 +306,8 @@ class PathFollower(Node):
         self.costmap_constraints = constraints
         self.costmap_constraints_global = global_constraints
         self.costmap_obstacles = self.costmap_filter.build_obstacle_circles()
-        self.path_manager.global_obstacle_window = float(
-            self.get_parameter('global_costmap_path_window').value
-        ) + self.global_constraint_radius
+        # GUI에서 조절한 path_window를 그대로 글로벌 장애물 거리창에도 사용해 불필요한 재계산을 막는다
+        self.path_manager.global_obstacle_window = self.costmap_filter.path_window + self.global_constraint_radius
         self.path_manager.global_obstacle_cap = int(
             self.get_parameter('global_costmap_max_constraints').value
         )

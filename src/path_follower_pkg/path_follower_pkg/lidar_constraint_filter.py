@@ -91,8 +91,8 @@ class LidarConstraintFilter:
         pts = pts[::step]
 
         norms = np.linalg.norm(pts, axis=1)
-        scale = np.where(norms > 1e-6, (norms - self.inflate_clearance) / norms, 0.0)
-        scale = np.clip(scale, 0.0, None)
+        # cp를 장애물 중심에서 일정 거리만큼 더 멀리 두어 여유를 확보한다
+        scale = np.where(norms > 1e-6, (norms + self.inflate_clearance) / norms, 0.0)
         inflated = pts * scale[:, None]
 
         if self.max_constraints and inflated.shape[0] > self.max_constraints:
