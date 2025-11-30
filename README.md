@@ -68,6 +68,12 @@ path_follower/
 
 ## 🚀 실행 방법
 
+### 한 번에 실행 (Tilix 필요)
+`tilix`가 설치되어 있고 `colcon build`를 완료했다면, 아래 스크립트 하나로 네 개 터미널을 자동으로 띄울 수 있습니다.
+```bash
+./scripts/run_path_follower_tilix.sh
+```
+
 ### 터미널 1: Static TF
 ```bash
 ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 map odom
