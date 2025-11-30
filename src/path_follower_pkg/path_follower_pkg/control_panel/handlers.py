@@ -75,9 +75,10 @@ class EventHandlers:
         }
         try:
             if 'planner_mode' in self.widgets:
-                self.widgets['planner_mode'].label.config(
-                    text=f"현재: {names.get(mode, mode).upper()}"
-                )
+                widget = self.widgets['planner_mode']
+                # 라디오 버튼과 상태 라벨을 동시에 업데이트
+                widget.set_mode(mode)
+                widget.label.config(text=f"현재: {names.get(mode, mode).upper()}")
             self.update_status()
         except:
             pass
