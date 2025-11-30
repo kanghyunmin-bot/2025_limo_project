@@ -181,15 +181,14 @@ def _push_away_from_obstacles(
     obstacles,
     flat_eps=1e-2,
     base_step=0.02,
-    clearance=0.06,
-    gain=0.6,
-    max_passes=5,
+    clearance=0.0,
+    gain=0.5,
+    max_passes=4,
 ):
-    """Push mid control points (P1/P2) outward until curve clears obstacle circles.
+    """충돌 구간이 사라질 때까지 한쪽 제어점만 밀어내는 간단한 보정.
 
-    - Uses De Casteljau 분할 + AABB 프루닝으로 충돌 구간만 빠르게 탐색
-    - P0/P3는 고정하고 P1/P2만 이동해 글로벌 경로 준수
-    - base_step/gain을 낮춰 연산량을 줄이고도 반복회수 안에 수렴하도록 조정
+    - P0/P3는 고정, P1/P2 중 겹치는 구간 쪽만 이동
+    - 반경 파라미터를 쓰지 않고, 겹친 정도만큼만 외측으로 민다
     """
 
     if not obstacles or len(control_points) < 4:
@@ -209,7 +208,6 @@ def _push_away_from_obstacles(
             for tmid in (a, 0.5 * (a + b), b):
                 mid = _bezier_eval(cp, tmid)
 
-                # 가장 많이 침투한 장애물을 찾는다.
                 best_obs = None
                 best_penetr = None
                 for center, radius in obstacles:
@@ -219,7 +217,7 @@ def _push_away_from_obstacles(
                         best_penetr = penetr
                         best_obs = (center, radius, dist)
 
-                if best_obs is None:
+                if best_obs is None or best_penetr is None:
                     continue
 
                 center, radius, dist = best_obs
@@ -230,9 +228,12 @@ def _push_away_from_obstacles(
                     norm = 1.0
                 nx, ny = vx / norm, vy / norm
 
-                push = max(base_step, gain * (max(0.0, radius - dist) + clearance))
-                p1 = (p1[0] + push * nx, p1[1] + push * ny)
-                p2 = (p2[0] + push * nx, p2[1] + push * ny)
+                # 겹친 만큼만 외측으로, 해당 구간의 제어점 한쪽만 민다
+                push = max(base_step, gain * max(0.0, radius - dist + clearance))
+                if tmid < 0.5:
+                    p1 = (p1[0] + push * nx, p1[1] + push * ny)
+                else:
+                    p2 = (p2[0] + push * nx, p2[1] + push * ny)
                 moved = True
 
         cp = np.array([p0, p1, p2, p3], dtype=float)

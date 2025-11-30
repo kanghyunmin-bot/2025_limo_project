@@ -329,6 +329,7 @@ class PathFollower(Node):
             # 실시간 코스트맵 갱신으로 곡선이 불필요하게 흔들리는 것을 방지.
             self.pending_costmap_update = False
             return
+
         self.costmap_constraints = constraints
         self.costmap_constraints_global = global_constraints
         self.costmap_obstacles = self.costmap_filter.build_obstacle_circles()
@@ -338,12 +339,19 @@ class PathFollower(Node):
             self.get_parameter('global_costmap_max_constraints').value
         )
         self._update_combined_constraints()
+
+        # 이미 확정된 글로벌 경로가 있으면 곡선을 다시 짜지 않고 제약만 갱신한다.
+        # (click → 한 번 확정 → 이후에는 costmap에 겹친 구간만 제어점 밀어내기)
+        has_global = self.path_manager.get_global_path() is not None
         self.path_manager.update_global_constraints(
             self.costmap_constraints_global,
             window=float(self.costmap_filter.path_window),
-            replan=True,
+            replan=not has_global,
         )
-        self.path_manager.update_global_obstacles(self.costmap_obstacles, replan=True)
+        self.path_manager.update_global_obstacles(
+            self.costmap_obstacles,
+            replan=not has_global,
+        )
 
         self.last_costmap_replan_time = now
         self.pending_costmap_update = False
