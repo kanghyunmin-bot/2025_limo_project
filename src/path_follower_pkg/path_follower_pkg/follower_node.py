@@ -292,6 +292,7 @@ class PathFollower(Node):
     def on_planner_mode(self, msg: String):
         self.path_manager.planner_mode = msg.data
         self.path_manager._path_dirty = True
+        self.get_logger().info(f"🧭 Planner mode → {msg.data.upper()}")
         if self.path_manager.waypoints:
             self.path_manager._update_path()
 

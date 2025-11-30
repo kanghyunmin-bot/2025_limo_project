@@ -155,7 +155,7 @@ class PathManager:
 
             if self.planner_mode == 'rrt' and self.global_obstacles:
                 waypoints_to_use = self._rrt_bridge_waypoints(waypoints_to_use)
-            elif self.planner_mode == 'apf' and self.global_obstacles:
+            elif self.planner_mode == 'apf':
                 waypoints_to_use = self._apf_bridge_waypoints(waypoints_to_use)
 
             if self.interpolation_method == 'none':
