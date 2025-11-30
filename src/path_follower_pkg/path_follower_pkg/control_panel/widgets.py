@@ -330,26 +330,24 @@ class PlannerModeFrame:
             foreground='gray'
         ).grid(row=0, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(0, 6))
 
-        # 두 열 배치로 모든 옵션이 한눈에 보이도록 구성
+        # 단일 행에 APF → A* → RRT → Dijkstra 순서로 배치
         options = [
-            ('rrt', 'RRT (무작위 샘플)'),
+            ('apf', 'APF (잠재장)'),
             ('astar', 'A* (휴리스틱 최단)'),
+            ('rrt', 'RRT (무작위 샘플)'),
             ('dijkstra', 'Dijkstra (균일 비용)'),
-            ('apf', 'APF (잠재장)')
         ]
         self.buttons = {}
-        for i, (key, label) in enumerate(options):
-            row = 1 + i // 2
-            col = i % 2
+        for col, (key, label) in enumerate(options):
             rb = ttk.Radiobutton(
                 self.frame, text=label, value=key, variable=self.var,
                 command=lambda m=key: self._on_select(m)
             )
-            rb.grid(row=row, column=col, sticky=tk.W, padx=5, pady=2)
+            rb.grid(row=1, column=col, sticky=tk.W, padx=5, pady=2)
             self.buttons[key] = rb
 
         self.label = ttk.Label(self.frame, text="현재: ASTAR", foreground="blue")
-        self.label.grid(row=1, column=2, rowspan=3, padx=10, sticky=tk.N)
+        self.label.grid(row=1, column=len(options), padx=10, sticky=tk.W)
 
     def _on_select(self, mode: str):
         """라디오 버튼 선택 시 핸들러 호출 및 상태 표시"""
