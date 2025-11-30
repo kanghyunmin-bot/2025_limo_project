@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from rclpy.node import Node
-from std_msgs.msg import Empty, String, Bool, Float32
+from std_msgs.msg import Empty, String, Bool, Float32, Float32MultiArray
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Path
 
@@ -23,6 +23,7 @@ class ControlPanelNode(Node):
         self.pub_global_constraint_radius = self.create_publisher(Float32, '/path_follower/global_constraint_radius', 10)
         self.pub_global_constraint_clearance = self.create_publisher(Float32, '/path_follower/global_constraint_clearance', 10)
         self.pub_planner_mode = self.create_publisher(String, '/path_follower/planner_mode', 10)
+        self.pub_apf_params = self.create_publisher(Float32MultiArray, '/path_follower/apf_params', 10)
         
         # Subscribers
         self.sub_path = self.create_subscription(Path, '/path_odom', self.on_path, 10)

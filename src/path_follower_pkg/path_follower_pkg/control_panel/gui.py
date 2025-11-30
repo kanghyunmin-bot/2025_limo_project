@@ -10,7 +10,7 @@ from .widgets import (
     PathSourceFrame, DrivingModeFrame, ControlButtonsFrame,
     VelocityFrame, ManualControlFrame, PathInfoFrame,
     WaypointsListFrame, StatusFrame, AccuracyFrame, ConstraintRadiusFrame,
-    PlannerModeFrame,
+    PlannerModeFrame, ApfParamsFrame,
 )
 
 class ControlPanelGUI:
@@ -40,6 +40,10 @@ class ControlPanelGUI:
 
         self.widgets['planner_mode'] = PlannerModeFrame(main_frame, self.handlers)
         self.widgets['planner_mode'].pack(fill=tk.X, pady=5)
+
+        # APF 파라미터를 직접 조정할 수 있는 패널
+        self.widgets['apf_params'] = ApfParamsFrame(main_frame, self.handlers)
+        self.widgets['apf_params'].pack(fill=tk.X, pady=5)
 
         self.widgets['driving_mode'] = DrivingModeFrame(main_frame, self.handlers)
         self.widgets['driving_mode'].pack(fill=tk.X, pady=5)

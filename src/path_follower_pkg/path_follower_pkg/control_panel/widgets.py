@@ -348,3 +348,42 @@ class PlannerModeFrame:
 
     def pack(self, **kwargs):
         self.frame.pack(**kwargs)
+
+
+class ApfParamsFrame:
+    """APF 파라미터를 GUI에서 직접 입력"""
+
+    def __init__(self, parent, handler):
+        self.frame = ttk.LabelFrame(parent, text="APF Parameters", padding=10)
+        self.handler = handler
+
+        labels = [
+            ("Step (m)", "0.25"),
+            ("Attract Gain", "1.0"),
+            ("Repel Gain", "0.9"),
+            ("Influence Dist (m)", "1.2"),
+            ("Goal Tol (m)", "0.18"),
+            ("Stall Tol (m)", "0.04"),
+        ]
+
+        self.entries = []
+        for i, (text, default) in enumerate(labels):
+            ttk.Label(self.frame, text=text).grid(row=i, column=0, sticky=tk.W, padx=5, pady=2)
+            entry = ttk.Entry(self.frame, width=8)
+            entry.insert(0, default)
+            entry.grid(row=i, column=1, padx=5, pady=2)
+            self.entries.append(entry)
+
+        ttk.Button(
+            self.frame,
+            text="Apply to APF",
+            command=self.handler.apply_apf_params,
+        ).grid(row=len(labels), column=0, columnspan=2, pady=4, padx=5, sticky=tk.EW)
+
+        self.status = ttk.Label(self.frame, text="APF 파라미터 입력 후 Apply", foreground="gray")
+        self.status.grid(row=len(labels) + 1, column=0, columnspan=2, sticky=tk.W, padx=5, pady=2)
+
+        self.frame.columnconfigure(1, weight=1)
+
+    def pack(self, **kwargs):
+        self.frame.pack(**kwargs)

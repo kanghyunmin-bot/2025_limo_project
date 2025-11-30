@@ -4,7 +4,7 @@ from rclpy.node import Node
 from geometry_msgs.msg import Twist, PointStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Path, Odometry, OccupancyGrid
 from sensor_msgs.msg import PointCloud2, LaserScan
-from std_msgs.msg import Empty, String, Float32
+from std_msgs.msg import Empty, String, Float32, Float32MultiArray
 import math
 import numpy as np
 import time
@@ -163,6 +163,7 @@ class PathFollower(Node):
         self.sub_global_radius = self.create_subscription(Float32, '/path_follower/global_constraint_radius', self.on_global_radius, 10)
         self.sub_global_clearance = self.create_subscription(Float32, '/path_follower/global_constraint_clearance', self.on_global_clearance, 10)
         self.sub_planner_mode = self.create_subscription(String, '/path_follower/planner_mode', self.on_planner_mode, 10)
+        self.sub_apf_params = self.create_subscription(Float32MultiArray, '/path_follower/apf_params', self.on_apf_params, 10)
     
     def on_odom(self, msg: Odometry):
         self.robot_pose[0] = msg.pose.pose.position.x
@@ -288,6 +289,42 @@ class PathFollower(Node):
         self._sync_costmap_windows()
         self.pending_costmap_update = True
         self.get_logger().info(f"🌐 Global clearance set to {val:.2f} m")
+
+    def on_apf_params(self, msg: Float32MultiArray):
+        data = list(msg.data)
+        params = self.path_manager.apf_planner.params
+
+        fields = [
+            'step', 'attract_gain', 'repel_gain',
+            'influence_dist', 'goal_tolerance', 'stall_tolerance',
+        ]
+
+        for name, val in zip(fields, data):
+            try:
+                setattr(params, name, float(val))
+            except Exception:
+                continue
+
+        if len(data) >= 7:
+            try:
+                params.max_iter = int(max(1, data[6]))
+            except Exception:
+                pass
+
+        self.path_manager._path_dirty = True
+        self.get_logger().info(
+            "🧭 APF params updated: step={:.3f}, attract={:.2f}, repel={:.2f}, infl={:.2f}, goal_tol={:.2f}, stall_tol={:.2f}, max_iter={}".format(
+                params.step,
+                params.attract_gain,
+                params.repel_gain,
+                params.influence_dist,
+                params.goal_tolerance,
+                params.stall_tolerance,
+                params.max_iter,
+            )
+        )
+        if self.path_manager.waypoints:
+            self.path_manager._update_path()
 
     def on_planner_mode(self, msg: String):
         self.path_manager.planner_mode = msg.data
