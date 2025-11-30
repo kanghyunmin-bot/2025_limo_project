@@ -45,6 +45,7 @@ class PathManager:
         self.interpolation_method = 'spline'
         self.drive_mode = 'differential'
         self.use_ackermann_path = False
+        self.planner_mode = 'astar'
         
         self.v_max = 1.0
         self.v_min = 0.2
@@ -150,7 +151,7 @@ class PathManager:
             if self.robot_start_pos is not None:
                 waypoints_to_use[0] = (self.robot_start_pos[0], self.robot_start_pos[1])
 
-            if self.interpolation_method == 'local_bezier' and self.global_obstacles:
+            if self.planner_mode == 'rrt' and self.global_obstacles:
                 waypoints_to_use = self._rrt_bridge_waypoints(waypoints_to_use)
 
             if self.interpolation_method == 'none':

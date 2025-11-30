@@ -36,7 +36,7 @@ class PathFollower(Node):
         self.declare_parameter('global_cost_threshold', 50)
         self.declare_parameter('global_costmap_search_radius', 3.0)
         self.declare_parameter('global_costmap_path_window', 0.8)
-        self.declare_parameter('global_costmap_inflate_margin', 0.33)
+        self.declare_parameter('global_costmap_inflate_margin', 0.0)
         self.declare_parameter('global_costmap_robot_radius', 0.20)
         self.declare_parameter('global_costmap_safety_margin', 0.05)
         self.declare_parameter('global_costmap_stride', 2)
@@ -44,6 +44,7 @@ class PathFollower(Node):
         self.declare_parameter('global_costmap_path_stride', 3)
         self.declare_parameter('global_costmap_replan_interval', 0.8)
         self.declare_parameter('local_constraint_inflate_clearance', 0.33)
+        self.declare_parameter('global_costmap_avoid_clearance', 0.3)
         
         # ✅ 주기 설정
         self.declare_parameter('controller_frequency', 60.0)  # 제어 주기
@@ -65,6 +66,7 @@ class PathFollower(Node):
         self.costmap_replan_interval = float(self.get_parameter('global_costmap_replan_interval').value)
         self.local_constraint_radius = float(self.get_parameter('local_constraint_inflate_clearance').value)
         self.global_constraint_radius = float(self.get_parameter('global_costmap_inflate_margin').value)
+        self.global_constraint_clearance = float(self.get_parameter('global_costmap_avoid_clearance').value)
 
         # Components
         self.path_manager = PathManager(self)
@@ -82,12 +84,14 @@ class PathFollower(Node):
             search_radius=float(self.get_parameter('global_costmap_search_radius').value),
             path_window=float(self.get_parameter('global_costmap_path_window').value),
             inflate_margin=self.global_constraint_radius,
+            avoid_clearance=self.global_constraint_clearance,
             robot_radius=float(self.get_parameter('global_costmap_robot_radius').value),
             safety_margin=float(self.get_parameter('global_costmap_safety_margin').value),
             stride=int(self.get_parameter('global_costmap_stride').value),
             max_constraints=int(self.get_parameter('global_costmap_max_constraints').value),
             path_stride=int(self.get_parameter('global_costmap_path_stride').value),
         )
+        self._sync_costmap_windows()
         
         # State
         self.robot_pose = np.array([0.0, 0.0, 0.0])
@@ -157,6 +161,8 @@ class PathFollower(Node):
         self.sub_velocity_params = self.create_subscription(Twist, '/path_follower/velocity_params', self.on_velocity_params, 10)
         self.sub_local_radius = self.create_subscription(Float32, '/path_follower/local_constraint_radius', self.on_local_radius, 10)
         self.sub_global_radius = self.create_subscription(Float32, '/path_follower/global_constraint_radius', self.on_global_radius, 10)
+        self.sub_global_clearance = self.create_subscription(Float32, '/path_follower/global_constraint_clearance', self.on_global_clearance, 10)
+        self.sub_planner_mode = self.create_subscription(String, '/path_follower/planner_mode', self.on_planner_mode, 10)
     
     def on_odom(self, msg: Odometry):
         self.robot_pose[0] = msg.pose.pose.position.x
@@ -269,12 +275,29 @@ class PathFollower(Node):
         val = max(0.0, float(msg.data))
         self.global_constraint_radius = val
         self.costmap_filter.inflate_margin = val
-        # GUI 입력 반경을 코스트맵 제약 거리창에도 반영해, 입력값이 바로 민감도에 적용되도록 한다
-        self.costmap_filter.path_window = max(val, 0.05)
-        self.path_manager.global_constraint_window = max(val, 0.0)
-        self.path_manager.global_obstacle_window = self.costmap_filter.path_window + val
+        self._sync_costmap_windows()
         self.pending_costmap_update = True
         self.get_logger().info(f"🌐 Global constraint radius set to {val:.2f} m (costmap)")
+
+    def on_global_clearance(self, msg: Float32):
+        val = max(0.0, float(msg.data))
+        self.global_constraint_clearance = val
+        self.costmap_filter.avoid_clearance = val
+        self._sync_costmap_windows()
+        self.pending_costmap_update = True
+        self.get_logger().info(f"🌐 Global clearance set to {val:.2f} m")
+
+    def on_planner_mode(self, msg: String):
+        self.path_manager.planner_mode = msg.data
+        self.path_manager._path_dirty = True
+        if self.path_manager.waypoints:
+            self.path_manager._update_path()
+
+    def _sync_costmap_windows(self):
+        margin = max(self.global_constraint_clearance, self.global_constraint_radius, 0.0)
+        self.costmap_filter.path_window = max(self.get_parameter('global_costmap_path_window').value, 0.0)
+        self.path_manager.global_constraint_window = self.costmap_filter.path_window + margin
+        self.path_manager.global_obstacle_window = self.costmap_filter.path_window + margin
 
     def _maybe_refresh_costmap_constraints(self):
         if not self.pending_costmap_update:
@@ -307,7 +330,7 @@ class PathFollower(Node):
         self.costmap_constraints_global = global_constraints
         self.costmap_obstacles = self.costmap_filter.build_obstacle_circles()
         # GUI에서 조절한 path_window를 그대로 글로벌 장애물 거리창에도 사용해 불필요한 재계산을 막는다
-        self.path_manager.global_obstacle_window = self.costmap_filter.path_window + self.global_constraint_radius
+        self._sync_costmap_windows()
         self.path_manager.global_obstacle_cap = int(
             self.get_parameter('global_costmap_max_constraints').value
         )

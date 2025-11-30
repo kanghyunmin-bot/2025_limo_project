@@ -172,7 +172,8 @@ source install/setup.bash
 - ✅ **Planner Path** 연동
 - ✅ **곡률 기반 속도 제어**
 - ✅ **실시간 GUI 제어**
-  - GUI에서 Local/Global Bézier 제약 반경을 직접 입력해 즉시 반영 (글로벌 반경 입력 시 코스트맵 제약 창도 함께 축소/확대)
+  - GUI에서 Local/Global Bézier 제약 반경과 **Costmap 회피 거리(글로벌 Clearance)** 를 숫자로 입력해 즉시 반영
+  - 글로벌/로컬 베지어 외에도 **RRT / A* / Dijkstra** 전역 플래너 모드를 GUI에서 선택 가능
 
 ---
 

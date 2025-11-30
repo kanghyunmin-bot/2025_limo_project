@@ -297,14 +297,47 @@ class ConstraintRadiusFrame:
 
         ttk.Label(self.frame, text="Global (Costmap)").grid(row=1, column=0, sticky=tk.W, padx=5, pady=3)
         self.entry_global = ttk.Entry(self.frame, width=8)
-        self.entry_global.insert(0, "0.33")
+        self.entry_global.insert(0, "0.0")
         self.entry_global.grid(row=1, column=1, padx=5, pady=3)
         ttk.Button(self.frame, text="Set", command=lambda: handler.set_constraint_radius('global')).grid(row=1, column=2, padx=5, pady=3)
 
-        self.status = ttk.Label(self.frame, text="Local/Global 반경을 직접 입력 후 Set", foreground="gray")
-        self.status.grid(row=2, column=0, columnspan=3, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.frame, text="Global Clearance (offset)").grid(row=2, column=0, sticky=tk.W, padx=5, pady=3)
+        self.entry_global_clearance = ttk.Entry(self.frame, width=8)
+        self.entry_global_clearance.insert(0, "0.30")
+        self.entry_global_clearance.grid(row=2, column=1, padx=5, pady=3)
+        ttk.Button(self.frame, text="Set", command=lambda: handler.set_constraint_radius('global_clearance')).grid(row=2, column=2, padx=5, pady=3)
+
+        self.status = ttk.Label(self.frame, text="Local/Global 반경·Clearance를 입력 후 Set", foreground="gray")
+        self.status.grid(row=3, column=0, columnspan=3, sticky=tk.W, padx=5, pady=5)
 
         self.frame.columnconfigure(1, weight=1)
+
+    def pack(self, **kwargs):
+        self.frame.pack(**kwargs)
+
+
+class PlannerModeFrame:
+    """글로벌 플래너 선택"""
+
+    def __init__(self, parent, handler):
+        self.frame = ttk.LabelFrame(parent, text="Planner Mode", padding=10)
+        self.handler = handler
+
+        self.var = tk.StringVar(value='astar')
+        options = [
+            ('rrt', 'RRT (무작위 샘플)'),
+            ('astar', 'A* (휴리스틱 최단)'),
+            ('dijkstra', 'Dijkstra (균일 비용)')
+        ]
+        for i, (key, label) in enumerate(options):
+            rb = ttk.Radiobutton(
+                self.frame, text=label, value=key, variable=self.var,
+                command=lambda m=key: handler.set_planner_mode(m)
+            )
+            rb.grid(row=i, column=0, sticky=tk.W, padx=5, pady=2)
+
+        self.label = ttk.Label(self.frame, text="현재: ASTAR", foreground="blue")
+        self.label.grid(row=0, column=1, rowspan=len(options), padx=10, sticky=tk.N)
 
     def pack(self, **kwargs):
         self.frame.pack(**kwargs)

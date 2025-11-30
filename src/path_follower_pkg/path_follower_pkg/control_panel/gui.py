@@ -9,7 +9,8 @@ from .widgets import (
     ControlModeFrame, DriveModeFrame, PathInterpolationFrame,
     PathSourceFrame, DrivingModeFrame, ControlButtonsFrame,
     VelocityFrame, ManualControlFrame, PathInfoFrame,
-    WaypointsListFrame, StatusFrame, AccuracyFrame, ConstraintRadiusFrame
+    WaypointsListFrame, StatusFrame, AccuracyFrame, ConstraintRadiusFrame,
+    PlannerModeFrame,
 )
 
 class ControlPanelGUI:
@@ -45,6 +46,9 @@ class ControlPanelGUI:
 
         self.widgets['constraint_radius'] = ConstraintRadiusFrame(main_frame, self.handlers)
         self.widgets['constraint_radius'].pack(fill=tk.X, pady=5)
+
+        self.widgets['planner_mode'] = PlannerModeFrame(main_frame, self.handlers)
+        self.widgets['planner_mode'].pack(fill=tk.X, pady=5)
 
         self.widgets['velocity'] = VelocityFrame(main_frame, self.handlers)
         self.widgets['velocity'].pack(fill=tk.X, pady=5)

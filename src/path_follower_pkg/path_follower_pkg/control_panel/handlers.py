@@ -43,11 +43,31 @@ class EventHandlers:
                 msg.data = val
                 self.node.pub_global_constraint_radius.publish(msg)
                 self.widgets['constraint_radius'].status.config(text=f"Global radius → {val:.2f} m", foreground="blue")
+            elif scope == 'global_clearance':
+                raw = self.widgets['constraint_radius'].entry_global_clearance.get()
+                val = float(raw)
+                msg = Float32()
+                msg.data = val
+                self.node.pub_global_constraint_clearance.publish(msg)
+                self.widgets['constraint_radius'].status.config(
+                    text=f"Global clearance → {val:.2f} m", foreground="purple"
+                )
         except Exception as e:
             try:
                 self.widgets['constraint_radius'].status.config(text=f"입력 오류: {e}", foreground="red")
             except:
                 pass
+
+    def set_planner_mode(self, mode: str):
+        """글로벌 플래너 선택 (RRT / A* / Dijkstra)"""
+        msg = String()
+        msg.data = mode
+        self.node.pub_planner_mode.publish(msg)
+        try:
+            if 'planner_mode' in self.widgets:
+                self.widgets['planner_mode'].label.config(text=f"현재: {mode.upper()}")
+        except:
+            pass
     
     def on_accuracy_update(self, accuracy):
         """✅ 정확도 업데이트"""

@@ -19,7 +19,8 @@ class CostmapConstraintFilter:
         cost_threshold: int = 50,
         search_radius: float = 3.0,
         path_window: float = 0.8,
-        inflate_margin: float = 0.33,
+        inflate_margin: float = 0.0,
+        avoid_clearance: float = 0.3,
         robot_radius: float = 0.20,
         safety_margin: float = 0.05,
         stride: int = 4,
@@ -30,6 +31,7 @@ class CostmapConstraintFilter:
         self.search_radius = search_radius
         self.path_window = path_window
         self.inflate_margin = inflate_margin
+        self.avoid_clearance = avoid_clearance
         self.robot_radius = robot_radius
         self.safety_margin = safety_margin
         self.stride = max(1, stride)
@@ -94,7 +96,8 @@ class CostmapConstraintFilter:
         norm = np.linalg.norm(offset)
         if norm < 1e-6:
             return nearest
-        scale = (norm + self.inflate_margin) / norm
+        clearance = max(0.0, self.avoid_clearance)
+        scale = (norm + clearance) / norm
         return nearest + offset * scale
 
     def _polyline_min_distance(self, pt: np.ndarray, path_pts: np.ndarray) -> float:
@@ -179,7 +182,8 @@ class CostmapConstraintFilter:
         diff = obs[:, None, :] - path[None, :, :]
         dist_sq = np.sum(diff * diff, axis=2)
         min_dists = np.min(dist_sq, axis=1)
-        keep = min_dists <= (self.path_window * self.path_window)
+        window_sq = (self.path_window + self.avoid_clearance) ** 2
+        keep = min_dists <= window_sq
         if not np.any(keep):
             return []
 
@@ -242,7 +246,8 @@ class CostmapConstraintFilter:
         diff = obs[:, None, :] - path[None, :, :]
         dist_sq = np.sum(diff * diff, axis=2)
         min_dists = np.min(dist_sq, axis=1)
-        keep = min_dists <= (self.path_window * self.path_window)
+        window_sq = (self.path_window + self.avoid_clearance) ** 2
+        keep = min_dists <= window_sq
         if not np.any(keep):
             return []
 
