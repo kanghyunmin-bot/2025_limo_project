@@ -119,7 +119,7 @@ class PathManager:
         waypoints_to_use = [
             (pose.pose.position.x, pose.pose.position.y) for pose in self.global_path.poses
         ]
-        self._apply_interpolation(waypoints_to_use, allow_planner=False)
+        self._apply_interpolation(waypoints_to_use)
     
     def _compute_path_orientations(self, points):
         orientations = []
@@ -155,57 +155,66 @@ class PathManager:
         return pose
     
     def _update_path(self):
+        """전체 경로 생성 파이프라인 (통합 버전)"""
         if len(self.waypoints) < 2:
             return
 
+        # 이미 생성된 글로벌 경로가 잠겨 있으면 재계산하지 않는다.
         if self.freeze_global_path and self.global_path is not None and self.global_locked:
-            # 이미 확정된 글로벌 경로를 그대로 사용한다.
             self.local_path = self.global_path
             self._path_dirty = False
             return
 
-        try:
-            waypoints_to_use = self.waypoints.copy()
-            self._apply_interpolation(waypoints_to_use, allow_planner=True)
-        except Exception as e:
-            self.node.get_logger().error(f"❌ {e}")
+        # 1) Planner 단계: 한 번 생성된 경로는 재계산을 피한다.
+        if not self.rrt_path_generated:
+            success = False
 
-    def _apply_interpolation(self, waypoints_to_use, allow_planner: bool = True):
+            if self.planner_mode == 'rrt':
+                success = self._rrt_bridge_waypoints()
+            elif self.planner_mode == 'apf':
+                success = self._apf_bridge_waypoints()
+            elif self.planner_mode == 'ackermann':
+                success = self._ackermann_bridge_waypoints()
+            else:
+                self._convert_list_to_global_path(self.waypoints)
+                success = True
+
+            if success:
+                self.rrt_path_generated = True
+
+        # 2) Interpolation 단계: 뼈대 경로 위에서 스무딩
+        if self.global_path is not None:
+            self._apply_interpolation()
+
+        self._path_dirty = False
+
+    def _apply_interpolation(self, waypoints_override=None):
         ds = 0.16 if self.interpolation_method not in ['local_bezier', 'only_global_bezier'] else 0.08
+
+        if waypoints_override is not None:
+            waypoints_to_use = list(waypoints_override)
+        elif self.global_path is not None:
+            waypoints_to_use = [
+                (pose.pose.position.x, pose.pose.position.y) for pose in self.global_path.poses
+            ]
+        else:
+            return
 
         if self.robot_start_pos is not None and waypoints_to_use:
             waypoints_to_use[0] = (self.robot_start_pos[0], self.robot_start_pos[1])
 
-        planned_waypoints = waypoints_to_use
-        if not allow_planner and self.rrt_path_generated and self.planned_waypoints:
-            planned_waypoints = self.planned_waypoints
-        elif allow_planner:
-            if self.planner_mode == 'rrt':
-                if self.rrt_path_generated and self.planned_waypoints:
-                    planned_waypoints = self.planned_waypoints
-                else:
-                    planned_waypoints = self._rrt_bridge_waypoints(waypoints_to_use)
-                    if planned_waypoints:
-                        self.rrt_path_generated = True
-            elif self.planner_mode == 'apf':
-                planned_waypoints = self._apf_bridge_waypoints(waypoints_to_use)
-                self.rrt_path_generated = False
-            else:
-                self.rrt_path_generated = False
-                planned_waypoints = waypoints_to_use
-
-        self.planned_waypoints = planned_waypoints.copy()
+        self.planned_waypoints = waypoints_to_use.copy()
 
         if self.interpolation_method == 'none':
-            smooth_points = np.array(planned_waypoints)
+            smooth_points = np.array(waypoints_to_use)
         elif self.interpolation_method == 'linear':
-            smooth_points = self._linear_interpolation(planned_waypoints, ds=ds)
+            smooth_points = self._linear_interpolation(waypoints_to_use, ds=ds)
         elif self.interpolation_method == 'subsample':
-            smooth_points = self._subsample_interpolation(planned_waypoints, ds=ds)
+            smooth_points = self._subsample_interpolation(waypoints_to_use, ds=ds)
         elif self.interpolation_method == 'bezier':
-            smooth_points = np.array(self.ackermann_planner.plan_path(planned_waypoints))
+            smooth_points = np.array(self.ackermann_planner.plan_path(waypoints_to_use))
         elif self.interpolation_method == 'only_global_bezier':
-            waypoints_np = np.array(planned_waypoints)
+            waypoints_np = np.array(waypoints_to_use)
             if BEZIER_AVAILABLE:
                 smooth_points = generate_bezier_from_waypoints(
                     waypoints_np,
@@ -224,7 +233,7 @@ class PathManager:
             else:
                 smooth_points = generate_smooth_path(waypoints_np, ds=ds)
         elif self.interpolation_method == 'local_bezier':
-            waypoints_np = np.array(planned_waypoints)
+            waypoints_np = np.array(waypoints_to_use)
             if BEZIER_AVAILABLE:
                 smooth_points = generate_bezier_from_waypoints(
                     waypoints_np,
@@ -243,7 +252,7 @@ class PathManager:
             else:
                 smooth_points = generate_smooth_path(waypoints_np, ds=ds)
         else:
-            waypoints_np = np.array(planned_waypoints)
+            waypoints_np = np.array(waypoints_to_use)
             smooth_points = generate_smooth_path(waypoints_np, ds=ds)
 
         smooth_points = np.array(smooth_points)
@@ -278,67 +287,80 @@ class PathManager:
         high = np.maximum(p0, p1) + (self.global_obstacle_window + 0.6)
         return low, high
 
-    def _rrt_bridge_waypoints(self, waypoints):
-        """Waypoint 사이를 RRT로 연결해 코스트맵 장애물을 피해가는 얇은 경로를 만든다."""
+    def _rrt_bridge_waypoints(self):
+        """RRT: 장애물(반지름 포함)을 고려해 웨이포인트 연결"""
+        new_path = []
+        new_path.append(self.waypoints[0])
 
-        if len(waypoints) < 2:
-            return waypoints
+        rrt_obstacles = []
+        obstacle_radius = 0.30
+        for obs in self.global_obstacles:
+            if isinstance(obs, (list, tuple)) and len(obs) == 2 and np.isscalar(obs[1]):
+                center = np.array(obs[0], dtype=float)
+            else:
+                center = np.array(obs, dtype=float)
+            rrt_obstacles.append((center, obstacle_radius))
 
-        planned: list[np.ndarray] = [np.array(waypoints[0], dtype=float)]
-        for i in range(len(waypoints) - 1):
-            start = planned[-1]
-            goal = np.array(waypoints[i + 1], dtype=float)
-            # 세그먼트 인근 장애물만 추려 RRT 충돌 검사를 단순화
-            seg_mid = 0.5 * (start + goal)
-            seg_len = np.linalg.norm(goal - start) + 1e-6
-            seg_obs = [
-                (c, r)
-                for (c, r) in self.global_obstacles
-                if np.linalg.norm(c - seg_mid) <= seg_len + self.global_obstacle_window
-            ]
-            rrt_path = self.rrt_planner.plan(
-                start,
-                goal,
-                obstacles=seg_obs,
-                bounds=self._rrt_bounds(start, goal),
-            )
-            if not rrt_path:
-                planned.append(goal)
-                continue
-            # 첫 점은 이미 planned[-1]에 있으므로 제외
-            for pt in rrt_path[1:]:
-                planned.append(pt)
+        for i in range(len(self.waypoints) - 1):
+            start = self.waypoints[i]
+            end = self.waypoints[i + 1]
 
-        return [(float(p[0]), float(p[1])) for p in planned]
+            segment = self.rrt_planner.plan(start, end, obstacles=rrt_obstacles)
 
-    def _apf_bridge_waypoints(self, waypoints):
-        """Connect waypoints with a short APF polyline around nearby obstacles."""
+            if segment:
+                new_path.extend(segment[1:])
+            else:
+                self.node.get_logger().warn(f"RRT failed segment {i}")
+                new_path.append(end)
 
-        if len(waypoints) < 2:
-            return waypoints
+        self._convert_list_to_global_path(new_path)
+        return True
 
-        planned: list[np.ndarray] = [np.array(waypoints[0], dtype=float)]
-        for i in range(len(waypoints) - 1):
-            start = planned[-1]
-            goal = np.array(waypoints[i + 1], dtype=float)
+    def _apf_bridge_waypoints(self):
+        """APF: 인공 포텐셜 필드로 장애물 회피 경로 생성"""
+        new_path = []
+        new_path.append(self.waypoints[0])
 
-            seg_mid = 0.5 * (start + goal)
-            seg_len = np.linalg.norm(goal - start) + 1e-6
-            seg_obs = [
-                (c, r)
-                for (c, r) in self.global_obstacles
-                if np.linalg.norm(c - seg_mid) <= seg_len + self.global_obstacle_window
-            ]
+        apf_obstacles = []
+        obstacle_radius = 0.30
+        for obs in self.global_obstacles:
+            if isinstance(obs, (list, tuple)) and len(obs) == 2 and np.isscalar(obs[1]):
+                center = np.array(obs[0], dtype=float)
+            else:
+                center = np.array(obs, dtype=float)
+            apf_obstacles.append((center, obstacle_radius))
 
-            path = self.apf_planner.plan(start, goal, seg_obs)
-            if not path:
-                planned.append(goal)
-                continue
+        for i in range(len(self.waypoints) - 1):
+            start = self.waypoints[i]
+            end = self.waypoints[i + 1]
 
-            for pt in path[1:]:
-                planned.append(pt)
+            segment = self.apf_planner.plan(start, end, obstacles=apf_obstacles)
 
-        return [(float(p[0]), float(p[1])) for p in planned]
+            if segment:
+                new_path.extend(segment[1:])
+            else:
+                new_path.append(end)
+
+        self._convert_list_to_global_path(new_path)
+        return True
+
+    def _ackermann_bridge_waypoints(self):
+        """Ackermann: 차량 운동학 기반 연결"""
+        new_points = self.ackermann_planner.plan_path(self.waypoints)
+        self._convert_list_to_global_path(new_points)
+        return True
+
+    def _convert_list_to_global_path(self, points_list):
+        path_msg = Path()
+        path_msg.header.frame_id = 'map'
+        path_msg.header.stamp = self.node.get_clock().now().to_msg()
+        for xy in points_list:
+            pose = PoseStamped()
+            pose.pose.position.x = xy[0]
+            pose.pose.position.y = xy[1]
+            pose.pose.orientation.w = 1.0
+            path_msg.poses.append(pose)
+        self.global_path = path_msg
 
     def update_local_path_with_cp(self, robot_pos):
         """✅ Local Bézier 실시간 업데이트"""
