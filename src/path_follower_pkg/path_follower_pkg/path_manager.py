@@ -257,17 +257,15 @@ class PathManager:
             pose = self._create_pose_with_orientation(point, yaw)
             self.global_path.poses.append(pose)
 
+        self._calculate_curvatures_and_velocities(smooth_points)
+
         if self.drive_mode == 'differential':
-            self.velocities = [self.v_max] * len(smooth_points)
             self.node.get_logger().info(
-                f"✅ Path: {len(smooth_points)} pts | Differential (uniform v={self.v_max:.2f})"
+                f"✅ Path: {len(smooth_points)} pts | Differential (decel-aware profile)"
             )
         else:
-            curvatures = compute_path_curvature(smooth_points)
-            self.velocities = self._simple_velocity_profile(curvatures)
-            self.global_curvatures = curvatures
             self.node.get_logger().info(
-                f"✅ Path: {len(smooth_points)} pts | Ackermann (curvature-based)"
+                f"✅ Path: {len(smooth_points)} pts | Ackermann (curvature+distance profile)"
             )
 
         self.local_path = self.global_path
@@ -424,6 +422,39 @@ class PathManager:
                 v = min(self.v_max, math.sqrt(self.max_lateral_accel / abs(curv)) * 0.9)
             velocities.append(np.clip(v, self.v_min, self.v_max))
         return velocities
+
+    def _calculate_curvatures_and_velocities(self, points):
+        if len(points) < 3:
+            self.global_curvatures = [0.0] * len(points)
+            self.velocities = [self.v_min] * len(points)
+            return
+
+        self.global_curvatures = compute_path_curvature(np.array(points))
+        self.velocities = []
+
+        # 누적 거리로 남은 거리를 추적해 도착 직전에 선형 감속
+        dists = [0.0] * len(points)
+        for i in range(1, len(points)):
+            d = math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1])
+            dists[i] = dists[i - 1] + d
+
+        total_dist = dists[-1]
+        decel_dist = 1.0  # 도착 1m 전부터 감속 시작
+
+        for i, k in enumerate(self.global_curvatures):
+            v_curv = self.v_max / (1.0 + 3.0 * abs(k))
+
+            remaining_dist = total_dist - dists[i]
+            if remaining_dist < decel_dist:
+                ratio = remaining_dist / decel_dist if decel_dist > 0 else 0.0
+                v_dist = self.v_max * ratio
+                v_final = min(v_curv, v_dist)
+                v_final = max(v_final, 0.15)
+            else:
+                v_final = v_curv
+
+            v_final = max(self.v_min, min(self.v_max, v_final))
+            self.velocities.append(v_final)
     
     def create_initial_path(self, robot_pos):
         try:
