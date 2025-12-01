@@ -39,6 +39,7 @@ class PathManager:
         self.global_obstacle_window = 1.0
         self.global_obstacle_cap = 32
         self.freeze_global_path = True
+        self.global_locked = False
         self._path_dirty = True
 
         self.ackermann_planner = AckermannPathPlanner()
@@ -94,6 +95,7 @@ class PathManager:
         self.waypoints.append((msg.point.x, msg.point.y))
         self.node.get_logger().info(f"📍 Waypoint {len(self.waypoints)}")
         self._path_dirty = True
+        self.global_locked = False
         if len(self.waypoints) >= 2:
             self._update_path()
 
@@ -102,6 +104,7 @@ class PathManager:
             return
         self.waypoints = [(p.pose.position.x, p.pose.position.y) for p in path_msg.poses]
         self._path_dirty = True
+        self.global_locked = False
         self._update_path()
     
     def _compute_path_orientations(self, points):
@@ -141,9 +144,10 @@ class PathManager:
         if len(self.waypoints) < 2:
             return
 
-        if self.freeze_global_path and self.global_path is not None and not self._path_dirty:
-            # 이미 확정된 글로벌 경로를 유지하고, 필요 시에만 로컬만 갱신
+        if self.freeze_global_path and self.global_path is not None and self.global_locked:
+            # 이미 확정된 글로벌 경로를 그대로 사용한다.
             self.local_path = self.global_path
+            self._path_dirty = False
             return
 
         try:
@@ -232,8 +236,10 @@ class PathManager:
                 self.node.get_logger().info(
                     f"✅ Path: {len(smooth_points)} pts | Ackermann (curvature-based)"
                 )
-            
+
             self.local_path = self.global_path
+            if self.freeze_global_path:
+                self.global_locked = True
             self._path_dirty = False
 
         except Exception as e:
@@ -406,6 +412,7 @@ class PathManager:
     def set_robot_start(self, robot_pos):
         self.robot_start_pos = robot_pos
         self._path_dirty = True
+        self.global_locked = False
 
     def update_constraint_points(self, constraint_points):
         self.constraint_points = constraint_points
@@ -452,4 +459,5 @@ class PathManager:
         self.constraint_points.clear()
         self.global_constraints.clear()
         self.global_obstacles.clear()
+        self.global_locked = False
         self._path_dirty = True
