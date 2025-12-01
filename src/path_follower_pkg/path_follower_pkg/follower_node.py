@@ -383,11 +383,11 @@ class PathFollower(Node):
         self.path_manager.update_global_constraints(
             self.costmap_constraints_global,
             window=float(self.costmap_filter.path_window),
-            replan=not has_global,
+            replan=True,
         )
         self.path_manager.update_global_obstacles(
             self.costmap_obstacles,
-            replan=not has_global,
+            replan=True,
         )
 
         self.last_costmap_replan_time = now

@@ -40,6 +40,8 @@ class PathManager:
         self.global_obstacle_cap = 32
         self.freeze_global_path = True
         self.global_locked = False
+        self.rrt_path_generated = False  # RRT 경로 생성 여부 확인 플래그
+        self.planned_waypoints: list[tuple[float, float]] = []
         self._path_dirty = True
 
         self.ackermann_planner = AckermannPathPlanner()
@@ -94,6 +96,7 @@ class PathManager:
     def add_waypoint(self, msg: PointStamped):
         self.waypoints.append((msg.point.x, msg.point.y))
         self.node.get_logger().info(f"📍 Waypoint {len(self.waypoints)}")
+        self.rrt_path_generated = False  # 새로운 목적지면 플래그 해제
         self._path_dirty = True
         self.global_locked = False
         if len(self.waypoints) >= 2:
@@ -105,7 +108,18 @@ class PathManager:
         self.waypoints = [(p.pose.position.x, p.pose.position.y) for p in path_msg.poses]
         self._path_dirty = True
         self.global_locked = False
+        self.rrt_path_generated = False
         self._update_path()
+
+    def _update_local_path_only(self):
+        """RRT는 그대로 두고 곡선/회피만 다시 계산"""
+        if self.global_path is None:
+            return
+
+        waypoints_to_use = [
+            (pose.pose.position.x, pose.pose.position.y) for pose in self.global_path.poses
+        ]
+        self._apply_interpolation(waypoints_to_use, allow_planner=False)
     
     def _compute_path_orientations(self, points):
         orientations = []
@@ -151,99 +165,115 @@ class PathManager:
             return
 
         try:
-            ds = 0.16 if self.interpolation_method not in ['local_bezier', 'only_global_bezier'] else 0.08
-
             waypoints_to_use = self.waypoints.copy()
-            if self.robot_start_pos is not None:
-                waypoints_to_use[0] = (self.robot_start_pos[0], self.robot_start_pos[1])
-
-            if self.planner_mode == 'rrt' and self.global_obstacles:
-                waypoints_to_use = self._rrt_bridge_waypoints(waypoints_to_use)
-            elif self.planner_mode == 'apf':
-                waypoints_to_use = self._apf_bridge_waypoints(waypoints_to_use)
-
-            if self.interpolation_method == 'none':
-                smooth_points = np.array(waypoints_to_use)
-            elif self.interpolation_method == 'linear':
-                smooth_points = self._linear_interpolation(waypoints_to_use, ds=ds)
-            elif self.interpolation_method == 'subsample':
-                smooth_points = self._subsample_interpolation(waypoints_to_use, ds=ds)
-            elif self.interpolation_method == 'bezier':
-                smooth_points = np.array(self.ackermann_planner.plan_path(waypoints_to_use))
-            elif self.interpolation_method == 'only_global_bezier':
-                waypoints_np = np.array(waypoints_to_use)
-                if BEZIER_AVAILABLE:
-                    smooth_points = generate_bezier_from_waypoints(
-                        waypoints_np,
-                        ds=ds,
-                        constraints=self.global_constraints,
-                        constraint_window=self.global_constraint_window,
-                        obstacles=self.global_obstacles,
-                        obstacle_window=self.global_obstacle_window,
-                        obstacle_cap=self.global_obstacle_cap,
-                    )
-                    if smooth_points is None:
-                        self.node.get_logger().warn(
-                            "⚠️ only_global_bezier: 제어점이 부족해 spline으로 대체합니다."
-                        )
-                        smooth_points = generate_smooth_path(waypoints_np, ds=ds)
-                else:
-                    smooth_points = generate_smooth_path(waypoints_np, ds=ds)
-            elif self.interpolation_method == 'local_bezier':
-                waypoints_np = np.array(waypoints_to_use)
-                if BEZIER_AVAILABLE:
-                    smooth_points = generate_bezier_from_waypoints(
-                        waypoints_np,
-                        ds=ds,
-                        constraints=self.global_constraints,
-                        constraint_window=self.global_constraint_window,
-                        obstacles=self.global_obstacles,
-                        obstacle_window=self.global_obstacle_window,
-                        obstacle_cap=self.global_obstacle_cap,
-                    )
-                    if smooth_points is None:
-                        self.node.get_logger().warn(
-                            "⚠️ local_bezier: 제어점이 부족해 spline으로 대체합니다."
-                        )
-                        smooth_points = generate_smooth_path(waypoints_np, ds=ds)
-                else:
-                    smooth_points = generate_smooth_path(waypoints_np, ds=ds)
-            else:
-                waypoints_np = np.array(waypoints_to_use)
-                smooth_points = generate_smooth_path(waypoints_np, ds=ds)
-            
-            smooth_points = np.array(smooth_points)
-            orientations = self._compute_path_orientations(smooth_points)
-            
-            self.global_path = Path()
-            self.global_path.header.frame_id = 'odom'
-            self.global_path.header.stamp = self.node.get_clock().now().to_msg()
-            
-            for point, yaw in zip(smooth_points, orientations):
-                pose = self._create_pose_with_orientation(point, yaw)
-                self.global_path.poses.append(pose)
-            
-            # ✅ Drive mode에 따라 속도 설정
-            if self.drive_mode == 'differential':
-                self.velocities = [self.v_max] * len(smooth_points)
-                self.node.get_logger().info(
-                    f"✅ Path: {len(smooth_points)} pts | Differential (uniform v={self.v_max:.2f})"
-                )
-            else:
-                curvatures = compute_path_curvature(smooth_points)
-                self.velocities = self._simple_velocity_profile(curvatures)
-                self.global_curvatures = curvatures
-                self.node.get_logger().info(
-                    f"✅ Path: {len(smooth_points)} pts | Ackermann (curvature-based)"
-                )
-
-            self.local_path = self.global_path
-            if self.freeze_global_path:
-                self.global_locked = True
-            self._path_dirty = False
-
+            self._apply_interpolation(waypoints_to_use, allow_planner=True)
         except Exception as e:
             self.node.get_logger().error(f"❌ {e}")
+
+    def _apply_interpolation(self, waypoints_to_use, allow_planner: bool = True):
+        ds = 0.16 if self.interpolation_method not in ['local_bezier', 'only_global_bezier'] else 0.08
+
+        if self.robot_start_pos is not None and waypoints_to_use:
+            waypoints_to_use[0] = (self.robot_start_pos[0], self.robot_start_pos[1])
+
+        planned_waypoints = waypoints_to_use
+        if not allow_planner and self.rrt_path_generated and self.planned_waypoints:
+            planned_waypoints = self.planned_waypoints
+        elif allow_planner:
+            if self.planner_mode == 'rrt':
+                if self.rrt_path_generated and self.planned_waypoints:
+                    planned_waypoints = self.planned_waypoints
+                else:
+                    planned_waypoints = self._rrt_bridge_waypoints(waypoints_to_use)
+                    if planned_waypoints:
+                        self.rrt_path_generated = True
+            elif self.planner_mode == 'apf':
+                planned_waypoints = self._apf_bridge_waypoints(waypoints_to_use)
+                self.rrt_path_generated = False
+            else:
+                self.rrt_path_generated = False
+                planned_waypoints = waypoints_to_use
+
+        self.planned_waypoints = planned_waypoints.copy()
+
+        if self.interpolation_method == 'none':
+            smooth_points = np.array(planned_waypoints)
+        elif self.interpolation_method == 'linear':
+            smooth_points = self._linear_interpolation(planned_waypoints, ds=ds)
+        elif self.interpolation_method == 'subsample':
+            smooth_points = self._subsample_interpolation(planned_waypoints, ds=ds)
+        elif self.interpolation_method == 'bezier':
+            smooth_points = np.array(self.ackermann_planner.plan_path(planned_waypoints))
+        elif self.interpolation_method == 'only_global_bezier':
+            waypoints_np = np.array(planned_waypoints)
+            if BEZIER_AVAILABLE:
+                smooth_points = generate_bezier_from_waypoints(
+                    waypoints_np,
+                    ds=ds,
+                    constraints=self.global_constraints,
+                    constraint_window=self.global_constraint_window,
+                    obstacles=self.global_obstacles,
+                    obstacle_window=self.global_obstacle_window,
+                    obstacle_cap=self.global_obstacle_cap,
+                )
+                if smooth_points is None:
+                    self.node.get_logger().warn(
+                        "⚠️ only_global_bezier: 제어점이 부족해 spline으로 대체합니다."
+                    )
+                    smooth_points = generate_smooth_path(waypoints_np, ds=ds)
+            else:
+                smooth_points = generate_smooth_path(waypoints_np, ds=ds)
+        elif self.interpolation_method == 'local_bezier':
+            waypoints_np = np.array(planned_waypoints)
+            if BEZIER_AVAILABLE:
+                smooth_points = generate_bezier_from_waypoints(
+                    waypoints_np,
+                    ds=ds,
+                    constraints=self.global_constraints,
+                    constraint_window=self.global_constraint_window,
+                    obstacles=self.global_obstacles,
+                    obstacle_window=self.global_obstacle_window,
+                    obstacle_cap=self.global_obstacle_cap,
+                )
+                if smooth_points is None:
+                    self.node.get_logger().warn(
+                        "⚠️ local_bezier: 제어점이 부족해 spline으로 대체합니다."
+                    )
+                    smooth_points = generate_smooth_path(waypoints_np, ds=ds)
+            else:
+                smooth_points = generate_smooth_path(waypoints_np, ds=ds)
+        else:
+            waypoints_np = np.array(planned_waypoints)
+            smooth_points = generate_smooth_path(waypoints_np, ds=ds)
+
+        smooth_points = np.array(smooth_points)
+        orientations = self._compute_path_orientations(smooth_points)
+
+        self.global_path = Path()
+        self.global_path.header.frame_id = 'odom'
+        self.global_path.header.stamp = self.node.get_clock().now().to_msg()
+
+        for point, yaw in zip(smooth_points, orientations):
+            pose = self._create_pose_with_orientation(point, yaw)
+            self.global_path.poses.append(pose)
+
+        if self.drive_mode == 'differential':
+            self.velocities = [self.v_max] * len(smooth_points)
+            self.node.get_logger().info(
+                f"✅ Path: {len(smooth_points)} pts | Differential (uniform v={self.v_max:.2f})"
+            )
+        else:
+            curvatures = compute_path_curvature(smooth_points)
+            self.velocities = self._simple_velocity_profile(curvatures)
+            self.global_curvatures = curvatures
+            self.node.get_logger().info(
+                f"✅ Path: {len(smooth_points)} pts | Ackermann (curvature-based)"
+            )
+
+        self.local_path = self.global_path
+        if self.freeze_global_path:
+            self.global_locked = True
+        self._path_dirty = False
 
     def _rrt_bounds(self, p0: np.ndarray, p1: np.ndarray):
         low = np.minimum(p0, p1) - (self.global_obstacle_window + 0.6)
@@ -422,12 +452,13 @@ class PathManager:
         if window is not None:
             self.global_constraint_window = float(window)
         if replan and len(self.waypoints) >= 2:
-            self._path_dirty = True
-            self._update_path()
+            self._update_local_path_only()
 
     def update_global_obstacles(self, obstacles, replan: bool = False):
         self.global_obstacles = obstacles or []
-        if replan and len(self.waypoints) >= 2:
+        if replan and self.rrt_path_generated:
+            self._update_local_path_only()
+        elif replan and not self.rrt_path_generated and len(self.waypoints) >= 2:
             self._path_dirty = True
             self._update_path()
 
@@ -460,4 +491,6 @@ class PathManager:
         self.global_constraints.clear()
         self.global_obstacles.clear()
         self.global_locked = False
+        self.planned_waypoints.clear()
+        self.rrt_path_generated = False
         self._path_dirty = True
