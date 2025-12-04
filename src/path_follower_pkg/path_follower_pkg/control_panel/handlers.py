@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-from std_msgs.msg import Empty, String, Bool
+from std_msgs.msg import Empty, String, Bool, Float32
+from std_msgs.msg import Float32MultiArray
 from geometry_msgs.msg import Twist
 
 class EventHandlers:
@@ -14,6 +15,7 @@ class EventHandlers:
         self.path_source = 'clicked_point'
         self.use_ackermann_path = False
         self.interpolation_method = 'spline'
+        self.planner_mode = 'astar'
         self.manual_mode = False
         self.keys_pressed = {}
         
@@ -22,6 +24,90 @@ class EventHandlers:
             self.node.set_accuracy_callback(self.on_accuracy_update)
         except:
             pass
+
+    def set_constraint_radius(self, scope: str):
+        """로컬/글로벌 베지어 제약 반경 입력 처리"""
+        try:
+            if 'constraint_radius' not in self.widgets:
+                return
+
+            if scope == 'local':
+                raw = self.widgets['constraint_radius'].entry_local.get()
+                val = float(raw)
+                msg = Float32()
+                msg.data = val
+                self.node.pub_local_constraint_radius.publish(msg)
+                self.widgets['constraint_radius'].status.config(text=f"Local radius → {val:.2f} m", foreground="green")
+            elif scope == 'global':
+                raw = self.widgets['constraint_radius'].entry_global.get()
+                val = float(raw)
+                msg = Float32()
+                msg.data = val
+                self.node.pub_global_constraint_radius.publish(msg)
+                self.widgets['constraint_radius'].status.config(text=f"Global radius → {val:.2f} m", foreground="blue")
+            elif scope == 'global_clearance':
+                raw = self.widgets['constraint_radius'].entry_global_clearance.get()
+                val = float(raw)
+                msg = Float32()
+                msg.data = val
+                self.node.pub_global_constraint_clearance.publish(msg)
+                self.widgets['constraint_radius'].status.config(
+                    text=f"Global clearance → {val:.2f} m", foreground="purple"
+                )
+        except Exception as e:
+            try:
+                self.widgets['constraint_radius'].status.config(text=f"입력 오류: {e}", foreground="red")
+            except:
+                pass
+
+    def set_planner_mode(self, mode: str):
+        """글로벌 플래너 선택 (RRT / A* / Dijkstra / APF)"""
+        self.planner_mode = mode
+        msg = String()
+        msg.data = mode
+        self.node.pub_planner_mode.publish(msg)
+
+        names = {
+            'rrt': 'RRT',
+            'astar': 'A*',
+            'dijkstra': 'Dijkstra',
+            'apf': 'APF',
+        }
+        try:
+            if 'planner_mode' in self.widgets:
+                widget = self.widgets['planner_mode']
+                # 라디오 버튼과 상태 라벨을 동시에 업데이트
+                widget.set_mode(mode)
+                widget.label.config(text=f"현재: {names.get(mode, mode).upper()}")
+            self.update_status()
+        except:
+            pass
+
+    def apply_apf_params(self):
+        """APF 파라미터를 GUI에서 입력한 값으로 적용"""
+        try:
+            widget = self.widgets.get('apf_params')
+            if widget is None:
+                return
+
+            values = []
+            for entry in widget.entries:
+                values.append(float(entry.get()))
+
+            msg = Float32MultiArray()
+            msg.data = values
+            self.node.pub_apf_params.publish(msg)
+
+            widget.status.config(text="APF 파라미터 적용 완료", foreground="green")
+            self.node.get_logger().info(
+                f"🧭 APF params updated: step={values[0]:.3f}, attract={values[1]:.2f}, "
+                f"repel={values[2]:.2f}, infl={values[3]:.2f}, goal_tol={values[4]:.2f}, stall_tol={values[5]:.2f}"
+            )
+        except Exception as e:
+            try:
+                self.widgets['apf_params'].status.config(text=f"입력 오류: {e}", foreground="red")
+            except Exception:
+                pass
     
     def on_accuracy_update(self, accuracy):
         """✅ 정확도 업데이트"""
@@ -37,10 +123,12 @@ class EventHandlers:
         msg = String()
         msg.data = mode
         self.node.pub_control_mode.publish(msg)
-        
+
         try:
             if mode == 'pure_pursuit':
                 self.widgets['control_mode'].label.config(text="현재: Pure Pursuit", foreground="blue")
+            elif mode == 'stanley_ff':
+                self.widgets['control_mode'].label.config(text="현재: Stanley + Feedforward", foreground="dark green")
             else:
                 self.widgets['control_mode'].label.config(text="현재: Stanley Method", foreground="purple")
             self.update_status()
@@ -75,6 +163,7 @@ class EventHandlers:
             'linear': 'Linear',
             'subsample': 'Subsampling',
             'spline': 'Cubic Spline',
+            'only_global_bezier': 'Global Bézier Only',
             'bezier': 'Bézier',
             'local_bezier': 'Local Bézier'
         }
@@ -239,9 +328,15 @@ class EventHandlers:
         try:
             if 'status' not in self.widgets:
                 return
-            
+
             mode_str = "MANUAL" if self.manual_mode else "AUTO"
-            control_str = "Pure Pursuit" if self.control_mode == 'pure_pursuit' else "Stanley"
+            if self.control_mode == 'pure_pursuit':
+                control_str = "Pure Pursuit"
+            elif self.control_mode == 'stanley_ff':
+                control_str = "Stanley+FF"
+            else:
+                control_str = "Stanley"
+
             drive_type_str = "Differential" if self.drive_mode == 'differential' else "Ackermann"
             
             interp_short = {
@@ -249,13 +344,22 @@ class EventHandlers:
                 'linear': 'Linear',
                 'subsample': 'Subsamp',
                 'spline': 'Spline',
+                'only_global_bezier': 'GlobBez',
                 'bezier': 'Bézier',
                 'local_bezier': 'LocalBez'
             }
             interp_str = interp_short.get(self.interpolation_method, self.interpolation_method)
-            
+
+            planner_short = {
+                'rrt': 'RRT',
+                'astar': 'A*',
+                'dijkstra': 'Dijk',
+                'apf': 'APF',
+            }
+            planner_str = planner_short.get(self.planner_mode, self.planner_mode)
+
             self.widgets['status'].label.config(
-                text=f"Ready | {mode_str} | {control_str} | {drive_type_str} | {interp_str}"
+                text=f"Ready | {mode_str} | {control_str} | {drive_type_str} | {interp_str} | {planner_str}"
             )
         except:
             pass
