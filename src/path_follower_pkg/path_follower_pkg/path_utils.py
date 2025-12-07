@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 import math
+from typing import Sequence
+
+import numpy as np
 
 def quaternion_to_yaw(q):
     return 2.0 * math.atan2(q.z, q.w)
@@ -11,35 +14,36 @@ def normalize_angle(angle):
         angle += 2 * math.pi
     return angle
 
-def find_nearest_point_on_path(robot_pos, robot_yaw, path_poses, last_idx=0):
-    """✅ 균형잡힌 nearest point"""
-    min_dist = float('inf')
-    nearest_idx = last_idx
-    
-    # 1차: 주변 탐색
-    search_start = max(0, last_idx - 5)
-    search_end = min(len(path_poses), last_idx + 50)
-    
-    for i in range(search_start, search_end):
-        px = path_poses[i].pose.position.x
-        py = path_poses[i].pose.position.y
-        dist = math.hypot(px - robot_pos[0], py - robot_pos[1])
-        
-        if dist < min_dist:
-            min_dist = dist
-            nearest_idx = i
-    
-    # 2차: fallback
-    if min_dist > 1.0 or nearest_idx == last_idx:
-        for i in range(0, len(path_poses)):
-            px = path_poses[i].pose.position.x
-            py = path_poses[i].pose.position.y
-            dist = math.hypot(px - robot_pos[0], py - robot_pos[1])
-            
-            if dist < min_dist:
-                min_dist = dist
-                nearest_idx = i
-    
+def find_nearest_point_on_path(
+    robot_pos,
+    robot_yaw,
+    path_poses: Sequence,
+    last_idx: int = 0,
+    window_size: int = 50,
+    loss_threshold: float = 1.0,
+):
+    """윈도우 기반 최근접점 탐색 (NumPy 가속, fallback 포함)."""
+
+    if not path_poses:
+        return 0, float("inf")
+
+    start = max(0, last_idx - 10)
+    end = min(len(path_poses), last_idx + window_size)
+    local_path = path_poses[start:end]
+
+    pts = np.array([[p.pose.position.x, p.pose.position.y] for p in local_path], dtype=float)
+    robot_xy = np.array(robot_pos[:2], dtype=float)
+    dist_sq = np.sum((pts - robot_xy) ** 2, axis=1)
+    local_idx = int(np.argmin(dist_sq))
+    min_dist = float(math.sqrt(dist_sq[local_idx]))
+    nearest_idx = start + local_idx
+
+    if min_dist > loss_threshold:
+        full_pts = np.array([[p.pose.position.x, p.pose.position.y] for p in path_poses], dtype=float)
+        dist_sq_full = np.sum((full_pts - robot_xy) ** 2, axis=1)
+        nearest_idx = int(np.argmin(dist_sq_full))
+        min_dist = float(math.sqrt(dist_sq_full[nearest_idx]))
+
     return nearest_idx, min_dist
 
 def compute_cross_track_error(robot_pos, robot_yaw, path_pose):
