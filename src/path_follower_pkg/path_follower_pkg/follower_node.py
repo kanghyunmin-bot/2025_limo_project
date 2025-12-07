@@ -96,7 +96,7 @@ class PathFollower(Node):
         # State
         self.robot_pose = np.array([0.0, 0.0, 0.0])
         self.is_running = False
-        self.path_source = 'clicked_point'
+        self.path_source = 'clicked_map'
         self.interpolation_method = 'spline'
         self.lidar_constraints = []
         self.costmap_constraints = []
@@ -132,7 +132,11 @@ class PathFollower(Node):
     
     def _setup_subscribers(self):
         self.sub_odom = self.create_subscription(Odometry, '/odom', self.on_odom, 10)
-        self.sub_clicked_point = self.create_subscription(PointStamped, '/clicked_point', self.on_clicked_point, 10)
+        # RViz 클릭 포인트(맵/그리드)를 분리해 수신
+        self.sub_clicked_point_map = self.create_subscription(PointStamped, '/clicked_point_map', self.on_clicked_point_map, 10)
+        self.sub_clicked_point_grid = self.create_subscription(PointStamped, '/clicked_point_grid', self.on_clicked_point_grid, 10)
+        # 호환성을 위해 기본 /clicked_point도 수신해 맵 클릭과 동일하게 처리
+        self.sub_clicked_point_legacy = self.create_subscription(PointStamped, '/clicked_point', self.on_clicked_point_map, 10)
         self.sub_planner_path = self.create_subscription(Path, '/planner/path', self.on_planner_path, 10)
         self.sub_init_pose = self.create_subscription(PoseWithCovarianceStamped, '/initialpose', self.on_init_pose, 10)
 
@@ -174,8 +178,14 @@ class PathFollower(Node):
             actual_path = self.path_recorder.record(msg)
             self.pub_actual_path.publish(actual_path)
     
-    def on_clicked_point(self, msg: PointStamped):
-        if self.path_source == 'clicked_point':
+    def on_clicked_point_map(self, msg: PointStamped):
+        if self.path_source in ['clicked_map', 'clicked_point']:
+            if len(self.path_manager.waypoints) == 0:
+                self.path_manager.set_robot_start(self.robot_pose)
+            self.path_manager.add_waypoint(msg)
+
+    def on_clicked_point_grid(self, msg: PointStamped):
+        if self.path_source == 'clicked_grid':
             if len(self.path_manager.waypoints) == 0:
                 self.path_manager.set_robot_start(self.robot_pose)
             self.path_manager.add_waypoint(msg)
@@ -227,9 +237,18 @@ class PathFollower(Node):
         self._maybe_refresh_costmap_constraints()
     
     def on_path_source(self, msg: String):
-        if msg.data in ['clicked_point', 'planner_path']:
+        if msg.data in ['clicked_map', 'clicked_grid', 'clicked_point', 'planner_path']:
             self.path_source = msg.data
             self.get_logger().info(f"🔄 Path Source: {self.path_source}")
+            if self.path_source == 'clicked_grid':
+                # 코스트맵 제약은 비활성화, 기존 제약 제거
+                self.costmap_constraints = []
+                self.costmap_constraints_global = []
+                self.pending_costmap_update = False
+                self._update_combined_constraints()
+            else:
+                # Map/Planner 계열은 코스트맵 제약을 새로 계산
+                self.pending_costmap_update = True
     
     def on_control_mode(self, msg: String):
         if msg.data in ['pure_pursuit', 'stanley', 'stanley_ff']:
@@ -261,8 +280,12 @@ class PathFollower(Node):
         return [translation + rot.dot(pt) for pt in constraint_points_base]
 
     def _update_combined_constraints(self):
-        combined = list(self.costmap_constraints)
-        combined.extend(self.lidar_constraints)
+        # Grid 클릭 모드에서는 코스트맵 제약을 무시하고, Map/Planner 모드에서만 코스트맵 제약을 합친다.
+        if self.path_source == 'clicked_grid':
+            combined = list(self.lidar_constraints)
+        else:
+            combined = list(self.costmap_constraints)
+            combined.extend(self.lidar_constraints)
         self.path_manager.update_constraint_points(combined)
 
     def on_local_radius(self, msg: Float32):
@@ -341,6 +364,11 @@ class PathFollower(Node):
 
     def _maybe_refresh_costmap_constraints(self):
         if not self.pending_costmap_update:
+            return
+
+        # Grid 클릭 경로는 코스트맵 기반 제약을 사용하지 않는다.
+        if self.path_source == 'clicked_grid':
+            self.pending_costmap_update = False
             return
 
         if self.path_manager.interpolation_method not in ['local_bezier', 'only_global_bezier']:

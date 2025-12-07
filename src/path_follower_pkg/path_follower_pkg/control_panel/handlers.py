@@ -12,7 +12,7 @@ class EventHandlers:
         
         self.control_mode = 'stanley'
         self.drive_mode = 'ackermann'
-        self.path_source = 'clicked_point'
+        self.path_source = 'clicked_map'
         self.use_ackermann_path = False
         self.interpolation_method = 'spline'
         self.planner_mode = 'astar'
@@ -194,10 +194,12 @@ class EventHandlers:
         msg = String()
         msg.data = source
         self.node.pub_path_source.publish(msg)
-        
+
         try:
-            if source == 'clicked_point':
-                self.widgets['path_source'].label.config(text="현재: RViz Clicked Point", foreground="blue")
+            if source == 'clicked_map':
+                self.widgets['path_source'].label.config(text="현재: RViz Map Click", foreground="blue")
+            elif source == 'clicked_grid':
+                self.widgets['path_source'].label.config(text="현재: RViz Grid Click", foreground="purple")
             else:
                 self.widgets['path_source'].label.config(text="현재: Planner Path", foreground="green")
         except:

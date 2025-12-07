@@ -106,20 +106,26 @@ class PathSourceFrame:
         self.frame = ttk.LabelFrame(parent, text="Path Source", padding=10)
         self.handler = handler
         
-        self.btn_clicked_point = ttk.Button(
-            self.frame, text="RViz Clicked Point",
-            command=lambda: handler.set_path_source('clicked_point'), width=25
+        self.btn_clicked_map = ttk.Button(
+            self.frame, text="RViz Map Click",
+            command=lambda: handler.set_path_source('clicked_map'), width=20
         )
-        self.btn_clicked_point.pack(side=tk.LEFT, padx=5)
-        
+        self.btn_clicked_map.pack(side=tk.LEFT, padx=4)
+
+        self.btn_clicked_grid = ttk.Button(
+            self.frame, text="RViz Grid Click",
+            command=lambda: handler.set_path_source('clicked_grid'), width=20
+        )
+        self.btn_clicked_grid.pack(side=tk.LEFT, padx=4)
+
         self.btn_planner_path = ttk.Button(
             self.frame, text="Planner Path",
-            command=lambda: handler.set_path_source('planner_path'), width=25
+            command=lambda: handler.set_path_source('planner_path'), width=18
         )
-        self.btn_planner_path.pack(side=tk.LEFT, padx=5)
-        
+        self.btn_planner_path.pack(side=tk.LEFT, padx=4)
+
         self.label = ttk.Label(
-            self.frame, text="현재: RViz Clicked Point",
+            self.frame, text="현재: RViz Map Click",
             foreground="blue", font=("Arial", 10, "bold")
         )
         self.label.pack(side=tk.LEFT, padx=10)

@@ -1,4 +1,4 @@
-# 🚗 Path Follower v2.7.6
+# 🚗 Path Follower v2.7.7
 
 **ROS 2 Humble 기반 자율 경로 추종 시스템 (Pure Pursuit / Stanley Method)**
 
@@ -180,7 +180,7 @@ source install/setup.bash
 ## 💡 주요 기능
 - ✅ **Pure Pursuit** / **Stanley Method** / **Stanley+Feedforward**
 - ✅ **Differential** / **Ackermann** Drive
-- ✅ **RViz Clicked Point** 경로 생성
+- ✅ **RViz Clicked Point** 경로 생성 (Map / Grid 클릭을 분리해 선택 가능)
 - ✅ **Planner Path** 연동
 - ✅ **곡률 기반 속도 제어**
 - ✅ **실시간 GUI 제어**
@@ -188,6 +188,11 @@ source install/setup.bash
   - 입력한 글로벌 Clearance 값이 코스트맵 거리창에도 적용되어, 경로와 겹치지 않을 때는 불필요한 재계산 없이 안정적으로 유지
   - 글로벌/로컬 베지어 외에도 **RRT / A* / Dijkstra / APF(인공 잠재장)** 전역 플래너 모드를 GUI에서 선택 가능
   - **APF Parameters** 패널에서 step, attract/repel gain, influence distance, goal/stall tolerance를 입력 후 Apply 시 즉시 반영
+
+### Path Source 선택 (GUI)
+- **RViz Map Click**: `/clicked_point_map` 또는 기본 `/clicked_point`를 사용하며, 코스트맵 제약을 적용해 장애물을 피해 Bézier를 굽힙니다.
+- **RViz Grid Click**: `/clicked_point_grid`를 사용하며, 코스트맵 제약을 무시하고 순수 그리드 클릭 기반 경로만 유지합니다.
+- **Planner Path**: `/planner/path` 입력을 그대로 사용합니다.
 
 ---
 
@@ -198,6 +203,7 @@ source install/setup.bash
 ---
 
 ## 📝 버전
+- **v2.7.7** (2025-11-09): RViz 경로 소스를 **Map Click / Grid Click**으로 분리해 코스트맵 적용 여부를 명확히 하고, GUI에서 바로 선택·제어하도록 추가
 - **v2.7.6** (2025-11-09): RRT/APF/Ackermann 브리지와 플래너 잠금을 통합해 경로 포맷 불일치(점↔원)와 반복 재계산 문제를 해결하고, 베지어 보간만 다시 적용하는 흐름으로 정리
 - **v2.7.5** (2025-11-09): 글로벌 경로 잠금 플래그를 추가해 클릭 후 생성된 전역 Bézier를 유지하고, 제약·코스트맵 갱신 시에도 글로벌 경로를 덮어쓰지 않도록 정리
 - **v2.7.4** (2025-11-09): 플래너 선택 라디오 버튼을 APF / A* / RRT / Dijkstra 가로 배치로 재구성하고, GUI 상태 배너와 연동
