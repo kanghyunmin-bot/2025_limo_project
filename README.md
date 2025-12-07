@@ -190,8 +190,8 @@ source install/setup.bash
   - **APF Parameters** 패널에서 step, attract/repel gain, influence distance, goal/stall tolerance를 입력 후 Apply 시 즉시 반영
 
 ### Path Source 선택 (GUI)
-- **RViz Map Click**: `/clicked_point_map` 또는 기본 `/clicked_point`를 사용하며, 코스트맵 제약을 적용해 장애물을 피해 Bézier를 굽힙니다.
-- **RViz Grid Click**: `/clicked_point_grid`를 사용하며, 코스트맵 제약을 무시하고 순수 그리드 클릭 기반 경로만 유지합니다.
+- **RViz Map Click**: Nav2 기본 Goal 툴의 `/goal_pose` 또는 Publish Point의 `/clicked_point`(또는 `/clicked_point_map`)를 사용하며, 코스트맵 제약을 적용해 장애물을 피해 Bézier를 굽힙니다.
+- **RViz Grid Click**: Publish Point `/clicked_point` 또는 `/clicked_point_grid`를 사용하며, 코스트맵 제약을 무시하고 순수 그리드 클릭 기반 경로만 유지합니다.
 - **Planner Path**: `/planner/path` 입력을 그대로 사용합니다.
 
 ---
