@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Twist, PointStamped, PoseStamped, PoseWithCovarianceStamped
+from geometry_msgs.msg import Twist, PointStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Path, Odometry, OccupancyGrid
 from sensor_msgs.msg import PointCloud2, LaserScan
 from std_msgs.msg import Empty, String, Float32, Float32MultiArray
@@ -133,9 +133,8 @@ class PathFollower(Node):
     def _setup_subscribers(self):
         self.sub_odom = self.create_subscription(Odometry, '/odom', self.on_odom, 10)
         # RViz 클릭 포인트(맵/그리드)를 분리해 수신
-        # RViz Map 클릭(기본 Publish Point: /clicked_point) 및 Nav2 Goal(/goal_pose)
+        # RViz Map 클릭(기본 Publish Point: /clicked_point) 및 별도 clicked_point_map
         self.sub_clicked_point_map = self.create_subscription(PointStamped, '/clicked_point_map', self.on_clicked_point_map, 10)
-        self.sub_goal_pose_map = self.create_subscription(PoseStamped, '/goal_pose', self.on_goal_pose_map, 10)
 
         # RViz Grid 클릭은 기본 Publish Point 토픽(/clicked_point)을 우선 사용하고, 별도 grid 토픽도 수신
         self.sub_clicked_point_grid = self.create_subscription(PointStamped, '/clicked_point_grid', self.on_clicked_point_grid, 10)
@@ -188,15 +187,6 @@ class PathFollower(Node):
             if len(self.path_manager.waypoints) == 0:
                 self.path_manager.set_robot_start(self.robot_pose)
             self.path_manager.add_waypoint(msg)
-
-    def on_goal_pose_map(self, msg: PoseStamped):
-        if self.path_source in ['clicked_map', 'clicked_point']:
-            pt = PointStamped()
-            pt.header = msg.header
-            pt.point = msg.pose.position
-            if len(self.path_manager.waypoints) == 0:
-                self.path_manager.set_robot_start(self.robot_pose)
-            self.path_manager.add_waypoint(pt)
 
     def on_clicked_point_grid(self, msg: PointStamped):
         if self.path_source == 'clicked_grid':
