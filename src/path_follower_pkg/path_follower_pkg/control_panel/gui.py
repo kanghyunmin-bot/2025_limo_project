@@ -9,7 +9,8 @@ from .widgets import (
     ControlModeFrame, DriveModeFrame, PathInterpolationFrame,
     PathSourceFrame, DrivingModeFrame, ControlButtonsFrame,
     VelocityFrame, ManualControlFrame, PathInfoFrame,
-    WaypointsListFrame, StatusFrame, AccuracyFrame
+    WaypointsListFrame, StatusFrame, AccuracyFrame, ConstraintRadiusFrame,
+    PlannerModeFrame, ApfParamsFrame,
 )
 
 class ControlPanelGUI:
@@ -33,16 +34,26 @@ class ControlPanelGUI:
         
         self.widgets['interpolation'] = PathInterpolationFrame(main_frame, self.handlers)
         self.widgets['interpolation'].pack(fill=tk.X, pady=5)
-        
+
         self.widgets['path_source'] = PathSourceFrame(main_frame, self.handlers)
         self.widgets['path_source'].pack(fill=tk.X, pady=5)
-        
+
+        self.widgets['planner_mode'] = PlannerModeFrame(main_frame, self.handlers)
+        self.widgets['planner_mode'].pack(fill=tk.X, pady=5)
+
+        # APF 파라미터를 직접 조정할 수 있는 패널
+        self.widgets['apf_params'] = ApfParamsFrame(main_frame, self.handlers)
+        self.widgets['apf_params'].pack(fill=tk.X, pady=5)
+
         self.widgets['driving_mode'] = DrivingModeFrame(main_frame, self.handlers)
         self.widgets['driving_mode'].pack(fill=tk.X, pady=5)
-        
+
         self.widgets['control_buttons'] = ControlButtonsFrame(main_frame, self.handlers)
         self.widgets['control_buttons'].pack(fill=tk.X, pady=5)
-        
+
+        self.widgets['constraint_radius'] = ConstraintRadiusFrame(main_frame, self.handlers)
+        self.widgets['constraint_radius'].pack(fill=tk.X, pady=5)
+
         self.widgets['velocity'] = VelocityFrame(main_frame, self.handlers)
         self.widgets['velocity'].pack(fill=tk.X, pady=5)
         

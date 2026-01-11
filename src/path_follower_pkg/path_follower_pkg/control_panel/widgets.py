@@ -13,13 +13,19 @@ class ControlModeFrame:
             command=lambda: handler.set_control_mode('pure_pursuit'), width=25
         )
         self.btn_pure_pursuit.pack(side=tk.LEFT, padx=5)
-        
+
         self.btn_stanley = ttk.Button(
             self.frame, text="Stanley Method",
             command=lambda: handler.set_control_mode('stanley'), width=25
         )
         self.btn_stanley.pack(side=tk.LEFT, padx=5)
-        
+
+        self.btn_stanley_ff = ttk.Button(
+            self.frame, text="Stanley + FF",
+            command=lambda: handler.set_control_mode('stanley_ff'), width=25
+        )
+        self.btn_stanley_ff.pack(side=tk.LEFT, padx=5)
+
         self.label = ttk.Label(
             self.frame, text="현재: Stanley Method",
             foreground="blue", font=("Arial", 10, "bold")
@@ -69,6 +75,7 @@ class PathInterpolationFrame:
             ('linear', '📏 Linear (직선 연결)'),
             ('subsample', '📍 Subsampling (균등 간격)'),
             ('spline', '🌀 Cubic Spline (부드러움)'),
+            ('only_global_bezier', '🌐 Global Bézier Only (글로벌 경로 고정)'),
             ('bezier', '🎨 Bézier (Ackermann 제약)'),
             ('local_bezier', '🚀 Local Bézier (실시간 최적화)')
         ]
@@ -99,20 +106,26 @@ class PathSourceFrame:
         self.frame = ttk.LabelFrame(parent, text="Path Source", padding=10)
         self.handler = handler
         
-        self.btn_clicked_point = ttk.Button(
-            self.frame, text="RViz Clicked Point",
-            command=lambda: handler.set_path_source('clicked_point'), width=25
+        self.btn_clicked_map = ttk.Button(
+            self.frame, text="RViz Map Click",
+            command=lambda: handler.set_path_source('clicked_map'), width=20
         )
-        self.btn_clicked_point.pack(side=tk.LEFT, padx=5)
-        
+        self.btn_clicked_map.pack(side=tk.LEFT, padx=4)
+
+        self.btn_clicked_grid = ttk.Button(
+            self.frame, text="RViz Grid Click",
+            command=lambda: handler.set_path_source('clicked_grid'), width=20
+        )
+        self.btn_clicked_grid.pack(side=tk.LEFT, padx=4)
+
         self.btn_planner_path = ttk.Button(
             self.frame, text="Planner Path",
-            command=lambda: handler.set_path_source('planner_path'), width=25
+            command=lambda: handler.set_path_source('planner_path'), width=18
         )
-        self.btn_planner_path.pack(side=tk.LEFT, padx=5)
-        
+        self.btn_planner_path.pack(side=tk.LEFT, padx=4)
+
         self.label = ttk.Label(
-            self.frame, text="현재: RViz Clicked Point",
+            self.frame, text="현재: RViz Map Click",
             foreground="blue", font=("Arial", 10, "bold")
         )
         self.label.pack(side=tk.LEFT, padx=10)
@@ -271,5 +284,125 @@ class StatusFrame:
         )
         self.label.pack()
     
+    def pack(self, **kwargs):
+        self.frame.pack(**kwargs)
+
+
+class ConstraintRadiusFrame:
+    """로컬/글로벌 베지어 제약 반경 입력"""
+
+    def __init__(self, parent, handler):
+        self.frame = ttk.LabelFrame(parent, text="Constraint Radius (m)", padding=10)
+        self.handler = handler
+
+        ttk.Label(self.frame, text="Local (LiDAR cp)").grid(row=0, column=0, sticky=tk.W, padx=5, pady=3)
+        self.entry_local = ttk.Entry(self.frame, width=8)
+        self.entry_local.insert(0, "0.33")
+        self.entry_local.grid(row=0, column=1, padx=5, pady=3)
+        ttk.Button(self.frame, text="Set", command=lambda: handler.set_constraint_radius('local')).grid(row=0, column=2, padx=5, pady=3)
+
+        ttk.Label(self.frame, text="Global (Costmap)").grid(row=1, column=0, sticky=tk.W, padx=5, pady=3)
+        self.entry_global = ttk.Entry(self.frame, width=8)
+        self.entry_global.insert(0, "0.0")
+        self.entry_global.grid(row=1, column=1, padx=5, pady=3)
+        ttk.Button(self.frame, text="Set", command=lambda: handler.set_constraint_radius('global')).grid(row=1, column=2, padx=5, pady=3)
+
+        ttk.Label(self.frame, text="Global Clearance (offset)").grid(row=2, column=0, sticky=tk.W, padx=5, pady=3)
+        self.entry_global_clearance = ttk.Entry(self.frame, width=8)
+        self.entry_global_clearance.insert(0, "0.30")
+        self.entry_global_clearance.grid(row=2, column=1, padx=5, pady=3)
+        ttk.Button(self.frame, text="Set", command=lambda: handler.set_constraint_radius('global_clearance')).grid(row=2, column=2, padx=5, pady=3)
+
+        self.status = ttk.Label(self.frame, text="Local/Global 반경·Clearance를 입력 후 Set", foreground="gray")
+        self.status.grid(row=3, column=0, columnspan=3, sticky=tk.W, padx=5, pady=5)
+
+        self.frame.columnconfigure(1, weight=1)
+
+    def pack(self, **kwargs):
+        self.frame.pack(**kwargs)
+
+
+class PlannerModeFrame:
+    """글로벌 플래너 선택"""
+
+    def __init__(self, parent, handler):
+        self.frame = ttk.LabelFrame(parent, text="Planner Mode", padding=10)
+        self.handler = handler
+
+        self.var = tk.StringVar(value='astar')
+        ttk.Label(
+            self.frame,
+            text="전역 플래너 선택 (GUI에서 바로 적용)",
+            foreground='gray'
+        ).grid(row=0, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(0, 6))
+
+        # 단일 행에 APF → A* → RRT → Dijkstra 순서로 배치
+        options = [
+            ('apf', 'APF (잠재장)'),
+            ('astar', 'A* (휴리스틱 최단)'),
+            ('rrt', 'RRT (무작위 샘플)'),
+            ('dijkstra', 'Dijkstra (균일 비용)'),
+        ]
+        self.buttons = {}
+        for col, (key, label) in enumerate(options):
+            rb = ttk.Radiobutton(
+                self.frame, text=label, value=key, variable=self.var,
+                command=lambda m=key: self._on_select(m)
+            )
+            rb.grid(row=1, column=col, sticky=tk.W, padx=5, pady=2)
+            self.buttons[key] = rb
+
+        self.label = ttk.Label(self.frame, text="현재: ASTAR", foreground="blue")
+        self.label.grid(row=1, column=len(options), padx=10, sticky=tk.W)
+
+    def _on_select(self, mode: str):
+        """라디오 버튼 선택 시 핸들러 호출 및 상태 표시"""
+        self.handler.set_planner_mode(mode)
+        self.set_mode(mode)
+
+    def set_mode(self, mode: str):
+        if mode in self.buttons:
+            self.var.set(mode)
+        self.label.config(text=f"현재: {mode.upper()}")
+
+    def pack(self, **kwargs):
+        self.frame.pack(**kwargs)
+
+
+class ApfParamsFrame:
+    """APF 파라미터를 GUI에서 직접 입력"""
+
+    def __init__(self, parent, handler):
+        self.frame = ttk.LabelFrame(parent, text="APF Parameters", padding=10)
+        self.handler = handler
+
+        labels = [
+            ("Step (m)", "0.25"),
+            ("Attract Gain", "1.0"),
+            ("Repel Gain", "0.9"),
+            ("Influence Dist (m)", "1.2"),
+            ("Goal Tol (m)", "0.18"),
+            ("Stall Tol (m)", "0.04"),
+        ]
+
+        self.entries = []
+        for i, (text, default) in enumerate(labels):
+            ttk.Label(self.frame, text=text).grid(row=i, column=0, sticky=tk.W, padx=5, pady=2)
+            entry = ttk.Entry(self.frame, width=8)
+            entry.insert(0, default)
+            entry.grid(row=i, column=1, padx=5, pady=2)
+            self.entries.append(entry)
+
+        ttk.Button(
+            self.frame,
+            text="Apply to APF",
+            command=self.handler.apply_apf_params,
+        ).grid(row=len(labels), column=0, columnspan=2, pady=4, padx=5, sticky=tk.EW)
+
+        self.status = ttk.Label(self.frame, text="APF 파라미터 입력 후 Apply", foreground="gray")
+        self.status.grid(row=len(labels) + 1, column=0, columnspan=2, sticky=tk.W, padx=5, pady=2)
+
+        self.frame.columnconfigure(1, weight=1)
+
     def pack(self, **kwargs):
         self.frame.pack(**kwargs)

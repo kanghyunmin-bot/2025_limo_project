@@ -50,6 +50,10 @@ class PathRecorder:
                 pose_stamped = PoseStamped()
                 pose_stamped.header = odom_msg.header
                 pose_stamped.pose = odom_msg.pose.pose
+
+                if len(self.actual_path.poses) > 5000:
+                    self.actual_path.poses.pop(0)
+
                 self.actual_path.poses.append(pose_stamped)
                 self.last_recorded_pose = current_pose
         
